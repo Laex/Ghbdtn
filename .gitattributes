@@ -1,0 +1,23 @@
+# Normalize to LF in the repo; Windows-only sources are checked out as CRLF
+# (the Delphi compiler, IDE and cmd.exe expect it regardless of core.autocrlf).
+* text=auto
+
+*.pas    text eol=crlf
+*.dpr    text eol=crlf
+*.dpk    text eol=crlf
+*.inc    text eol=crlf
+*.fmx    text eol=crlf
+*.dfm    text eol=crlf
+*.dproj  text eol=crlf
+*.groupproj text eol=crlf
+*.rc     text eol=crlf
+*.bat    text eol=crlf
+*.cmd    text eol=crlf
+*.ps1    text eol=crlf
+
+*.res    binary
+*.dres   binary
+*.ico    binary
+*.png    binary
+
+*.md     linguist-documentation

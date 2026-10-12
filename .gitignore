@@ -1,0 +1,93 @@
+# Delphi / RAD Studio
+*.dcu
+*.dcp
+*.dcpil
+*.dsk
+*.dti
+*.drc
+*.exe
+*.dll
+*.bpl
+*.bpi
+*.rsm
+*.map
+*.jdbg
+*.local
+*.identcache
+*.tvsconfig
+*.stat
+*.dsv
+*.~*
+*.bak
+*.ddp
+*.cfg
+*.dof
+*.mes
+*.otares
+*.vlb
+*.skincfg
+*.groupproj.local
+*.dproj.local
+*.deployproj
+*.app
+*.dylib
+*.so
+*.a
+*.o
+*.obj
+*.lib
+*.ridl
+*.tlb
+*.ocx
+
+# Compiled resources (keep the project .res linked from Ghbdtn.dpr)
+*.res
+!/Ghbdtn.res
+!*.rc
+*.dres
+
+# Project build outputs (see Ghbdtn.dproj: DCC_ExeOutput / DCC_DcuOutput)
+/bin/*
+/dist/
+src/dcu/
+
+# Platform / IDE build trees (any depth)
+Win32/
+Win64/
+Android/
+Android64/
+iOSDevice*/
+iOSSimulator/
+OSX*/
+Linux*/
+__history/
+__recovery/
+modules/
+
+# Dot-files and dot-folders are local tooling unless listed here
+.*
+!.gitignore
+!.gitattributes
+
+# IDE / OS junk
+Thumbs.db
+desktop.ini
+
+# Runtime / logs (local machine; not source)
+*.log
+*.tmp
+*.temp
+*.old
+.update-staging/
+
+# Keys, certificates, local secrets
+.env
+.env.*
+*.pem
+*.key
+*.pfx
+*.p12
+*.ppk
+id_rsa*
+id_ecdsa*
+id_ed25519*

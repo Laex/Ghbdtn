@@ -1,0 +1,84 @@
+<Project xmlns="http://schemas.microsoft.com/developer/msbuild/2003">
+  <PropertyGroup>
+    <ProjectGuid>{A427DB43-5F56-4EC8-ACB0-0CE7F83B183D}</ProjectGuid>
+    <ProjectVersion>20.4</ProjectVersion>
+    <FrameworkType>None</FrameworkType>
+    <MainSource>Ghbdtn.Tests.dpr</MainSource>
+    <Base>True</Base>
+    <Config Condition="'$(Config)'==''">Debug</Config>
+    <Platform Condition="'$(Platform)'==''">Win64</Platform>
+    <TargetedPlatforms>2</TargetedPlatforms>
+    <AppType>Console</AppType>
+    <ProjectName Condition="'$(ProjectName)'==''">Ghbdtn.Tests</ProjectName>
+  </PropertyGroup>
+  <PropertyGroup Condition="'$(Config)'=='Base' or '$(Base)'!=''">
+    <Base>true</Base>
+  </PropertyGroup>
+  <PropertyGroup Condition="('$(Platform)'=='Win64' and '$(Base)'=='true') or '$(Base_Win64)'!=''">
+    <Base_Win64>true</Base_Win64>
+    <CfgParent>Base</CfgParent>
+    <Base>true</Base>
+  </PropertyGroup>
+  <PropertyGroup Condition="'$(Config)'=='Debug' or '$(Cfg_Debug)'!=''">
+    <Cfg_Debug>true</Cfg_Debug>
+    <CfgParent>Base</CfgParent>
+    <Base>true</Base>
+  </PropertyGroup>
+  <PropertyGroup Condition="'$(Config)'=='Release' or '$(Cfg_Release)'!=''">
+    <Cfg_Release>true</Cfg_Release>
+    <CfgParent>Base</CfgParent>
+    <Base>true</Base>
+  </PropertyGroup>
+  <PropertyGroup Condition="'$(Base)'!=''">
+    <DCC_ExeOutput>..\bin\tests</DCC_ExeOutput>
+    <DCC_DcuOutput>..\src\dcu\tests</DCC_DcuOutput>
+    <DCC_UnitSearchPath>..\src;$(BDS)\source\DUnitX;$(DCC_UnitSearchPath)</DCC_UnitSearchPath>
+    <DCC_Namespace>System;Xml;Data;Datasnap;Web;Soap;Vcl;$(DCC_Namespace)</DCC_Namespace>
+    <DCC_CodePage>65001</DCC_CodePage>
+    <DCC_Hints>true</DCC_Hints>
+    <DCC_Warnings>true</DCC_Warnings>
+  </PropertyGroup>
+  <PropertyGroup Condition="'$(Base_Win64)'!=''">
+    <DCC_Platform>x64</DCC_Platform>
+  </PropertyGroup>
+  <PropertyGroup Condition="'$(Cfg_Debug)'!=''">
+    <DCC_Define>DEBUG;$(DCC_Define)</DCC_Define>
+    <DCC_Optimize>false</DCC_Optimize>
+    <DCC_DebugInfoInExe>true</DCC_DebugInfoInExe>
+  </PropertyGroup>
+  <PropertyGroup Condition="'$(Cfg_Release)'!=''">
+    <DCC_Define>RELEASE;$(DCC_Define)</DCC_Define>
+    <DCC_Optimize>true</DCC_Optimize>
+    <DCC_DebugInformation>0</DCC_DebugInformation>
+  </PropertyGroup>
+  <ItemGroup>
+    <DelphiCompile Include="$(MainSource)">
+      <MainSource>MainSource</MainSource>
+    </DelphiCompile>
+    <DCCReference Include="Ghbdtn.Tests.Core.pas"/>
+    <DCCReference Include="..\src\Ghbdtn.Layout.pas"/>
+    <DCCReference Include="..\src\Ghbdtn.Heuristics.pas"/>
+    <DCCReference Include="..\src\Ghbdtn.Analyzer.pas"/>
+    <DCCReference Include="..\src\Ghbdtn.Buffer.pas"/>
+    <DCCReference Include="..\src\Ghbdtn.KeyState.pas"/>
+    <DCCReference Include="..\src\Ghbdtn.Learning.pas"/>
+    <DCCReference Include="..\src\Ghbdtn.Phrase.pas"/>
+    <DCCReference Include="..\src\Ghbdtn.Settings.pas"/>
+    <DCCReference Include="..\src\Ghbdtn.InputQueue.pas"/>
+    <DCCReference Include="..\src\Ghbdtn.Fixer.pas"/>
+    <DCCReference Include="..\src\Ghbdtn.Diagnostics.pas"/>
+    <DCCReference Include="..\src\Ghbdtn.SingleInstance.pas"/>
+    <BuildConfiguration Include="Base">
+      <Key>Base</Key>
+    </BuildConfiguration>
+    <BuildConfiguration Include="Debug">
+      <Key>Cfg_Debug</Key>
+      <CfgParent>Base</CfgParent>
+    </BuildConfiguration>
+    <BuildConfiguration Include="Release">
+      <Key>Cfg_Release</Key>
+      <CfgParent>Base</CfgParent>
+    </BuildConfiguration>
+  </ItemGroup>
+  <Import Project="$(BDS)\Bin\CodeGear.Delphi.Targets" Condition="Exists('$(BDS)\Bin\CodeGear.Delphi.Targets')"/>
+</Project>
