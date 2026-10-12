@@ -44,6 +44,8 @@ type
     FRightTapCount: Integer;
     FRightTapTick: UInt64;
     FLastCaseText: string;
+    FLastSelectionOriginal: string;
+    FLastSelectionConverted: string;
     FCaseLock: TCriticalSection;
     FSelectionArmed: Boolean;
     FSelectionArmedTick: UInt64;
@@ -96,6 +98,7 @@ type
     procedure HandleRightShiftEvent(AIsKeyDown, AIsKeyUp: Boolean);
     procedure HandleDoubleRightShift;
     procedure ClearLastCase;
+    function TakeSelectionUndo(out AOriginal, AConverted: string): Boolean;
     function ReadCaseText: string;
     procedure HandleBackspace;
     function HandleWordDelimiter(ALang: TLangKind; VKCode: DWORD;
@@ -130,6 +133,7 @@ type
     procedure ToggleGlobalPause;
     function CurrentLearningProcess: string;
     procedure RememberCaseText(const AText: string);
+    procedure RememberSelectionConversion(const AOriginal, AConverted: string);
     property OnLangChange: TLangChangeEvent read FOnLangChange write FOnLangChange;
   end;
 
@@ -156,6 +160,7 @@ const
   LowLevelHookExtended = $01;
   LowLevelHookUp = $80;
   LearningUndoWindowMs = 3000;
+  MaxSelectionUndoChars = 512;
   LessonNone = 0;
   LessonWeakReject = 1;
   LessonStrongReject = 2;
@@ -333,6 +338,8 @@ begin
   FCaseLock.Enter;
   try
     FLastCaseText := '';
+    FLastSelectionOriginal := '';
+    FLastSelectionConverted := '';
   finally
     FCaseLock.Leave;
   end;
@@ -353,6 +360,29 @@ begin
   FCaseLock.Enter;
   try
     FLastCaseText := AText;
+    FLastSelectionOriginal := '';
+    FLastSelectionConverted := '';
+  finally
+    FCaseLock.Leave;
+  end;
+end;
+
+procedure TKbdHookManager.RememberSelectionConversion(const AOriginal,
+  AConverted: string);
+begin
+  // Only single-line text is erased and retyped to undo the conversion;
+  // line breaks do not map one-to-one to Backspace presses.
+  if (AOriginal = '') or (AConverted = '') or
+     (Length(AConverted) > MaxSelectionUndoChars) or
+     (Pos(#10, AConverted) > 0) or (Pos(#13, AConverted) > 0) then
+  begin
+    ClearLastCase;
+    Exit;
+  end;
+  FCaseLock.Enter;
+  try
+    FLastSelectionOriginal := AOriginal;
+    FLastSelectionConverted := AConverted;
   finally
     FCaseLock.Leave;
   end;
@@ -720,12 +750,25 @@ begin
   ClearLastConversion;
 end;
 
+function TKbdHookManager.TakeSelectionUndo(out AOriginal,
+  AConverted: string): Boolean;
+begin
+  FCaseLock.Enter;
+  try
+    AOriginal := FLastSelectionOriginal;
+    AConverted := FLastSelectionConverted;
+  finally
+    FCaseLock.Leave;
+  end;
+  Result := (AOriginal <> '') and (AConverted <> '');
+end;
+
 procedure TKbdHookManager.HandleDoubleLeftShift;
 var
   Item: TInputWorkItem;
   CurrentLang: TLangKind;
   Profile: TApplicationProfile;
-  ManualWord: string;
+  ManualWord, UndoOriginal, UndoConverted: string;
   PreferSelection: Boolean;
 begin
   FillChar(Item, SizeOf(Item), 0);
@@ -773,6 +816,18 @@ begin
     RevertPhraseToTypedLayout;
     RememberConversionLesson(laRejectStrong);
     ClearLastConversion;
+  end
+  else if TakeSelectionUndo(UndoOriginal, UndoConverted) then
+  begin
+    // Undo of the previous selection or caret-word conversion; a further
+    // double Left Shift converts the text again.
+    Item.Kind := iwReplaceWord;
+    Item.OldWordLength := Length(UndoConverted);
+    Item.NewText := UndoOriginal;
+    Item.TargetLang := CurrentLang;
+    Item.PlaySwitchSound := False;
+    ClearLastConversion;
+    RememberSelectionConversion(UndoConverted, UndoOriginal);
   end
   else
   begin

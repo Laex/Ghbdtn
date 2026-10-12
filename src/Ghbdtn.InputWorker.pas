@@ -586,6 +586,8 @@ begin
     begin
       if Prepared and (Caret.Source <> csSelected) then
         RememberManualWord(AItem.LearningProcess, SelectedText);
+      if HookManager <> nil then
+        HookManager.RememberSelectionConversion(SelectedText, ConvertedText);
     end;
     if not AItem.CaseCycle and AppSettings.SwitchLayoutAfterSelection then
     begin
