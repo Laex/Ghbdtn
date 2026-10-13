@@ -1280,6 +1280,10 @@ begin
         if (Analysis.TargetLang = lkRU) and
            CharInSet(APunctuation, [',', '.']) then
           Item.NewText := Item.NewText + ConvertCharSwap(APunctuation)
+        // "?" and "/" on the English layout are the Russian "," and ".".
+        else if (Analysis.TargetLang = lkRU) and (ALang = lkEN) and
+                CharInSet(APunctuation, ['?', '/']) then
+          Item.NewText := Item.NewText + ConvertCharSwap(APunctuation)
         else
           Item.NewText := Item.NewText + APunctuation;
         FConsumedDelimiterVK := Word(VKCode);
