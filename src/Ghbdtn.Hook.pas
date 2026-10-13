@@ -1217,6 +1217,15 @@ begin
     end;
     Exit;
   end;
+  // A kept "," or "." ended the word that was already analyzed. Nothing is
+  // typed after it, so there is no new word to check.
+  if CharInSet(FInputBuffer.BufferText[Length(FInputBuffer.BufferText)],
+    [',', '.']) then
+  begin
+    FInputBuffer.Clear;
+    FBackspaceRun := 0;
+    Exit;
+  end;
   if ColonEndsASingleLetter(FInputBuffer.BufferText, APunctuation) then
   begin
     FInputBuffer.Clear;
@@ -1309,6 +1318,16 @@ begin
   begin
     SettlePendingPhrase(True);
     RememberCommittedWord(ALang, FInputBuffer.BufferText);
+  end;
+  // In the English layout "," and "." are the Russian letters "b" and "yu".
+  // A kept word stays in the buffer with the mark, so letters typed right after
+  // it (Hf,jxbq) are analyzed together as one word.
+  if (not Result) and (ALang = lkEN) and (APunctuation <> #0) and
+     CharInSet(APunctuation, [',', '.']) then
+  begin
+    FInputBuffer.AddChar(APunctuation, ALang);
+    FBackspaceRun := 0;
+    Exit;
   end;
   FInputBuffer.Clear;
   FBackspaceRun := 0;
