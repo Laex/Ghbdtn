@@ -12,6 +12,9 @@ uses
 { The cost of a lowercase word, or -1 when the word is not in the list. }
 function WordCost(const ALower: string; ALang: TLangKind): Integer;
 
+{ Whether some word of the list begins with the lowercase text. }
+function HasWordWithPrefix(const ALower: string; ALang: TLangKind): Boolean;
+
 implementation
 
 uses
@@ -1072,6 +1075,27 @@ begin
   end
   else if not GRussianWords.TryGetValue(ALower.Replace('ё', 'е'), Result) then
     Result := -1;
+end;
+
+function HasWordWithPrefix(const ALower: string; ALang: TLangKind): Boolean;
+var
+  Words: TDictionary<string, Integer>;
+  Prefix, Word: string;
+begin
+  if ALang = lkEN then
+  begin
+    Words := GEnglishWords;
+    Prefix := ALower;
+  end
+  else
+  begin
+    Words := GRussianWords;
+    Prefix := ALower.Replace('ё', 'е');
+  end;
+  for Word in Words.Keys do
+    if Word.StartsWith(Prefix) then
+      Exit(True);
+  Result := False;
 end;
 
 initialization

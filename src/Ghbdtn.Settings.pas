@@ -71,6 +71,8 @@ type
     FPauseInFullscreen: Boolean;
     FEnglishInSecureFields: Boolean;
     FDoubleCtrlEnabled: Boolean;
+    FEarlySwitchEnabled: Boolean;
+    FEarlySwitchLetters: Integer;
     FApplicationRules: TObjectList<TApplicationRule>;
     FLearning: TDictionary<string, TLearningEntry>;
     FAppLearning: TObjectDictionary<string, TDictionary<string, TLearningEntry>>;
@@ -125,6 +127,10 @@ type
     procedure SetEnglishInSecureFields(AValue: Boolean);
     function GetDoubleCtrlEnabled: Boolean;
     procedure SetDoubleCtrlEnabled(AValue: Boolean);
+    function GetEarlySwitchEnabled: Boolean;
+    procedure SetEarlySwitchEnabled(AValue: Boolean);
+    function GetEarlySwitchLetters: Integer;
+    procedure SetEarlySwitchLetters(AValue: Integer);
     procedure SetDefaults;
     procedure SetDefaultsUnlocked;
     function LoadJsonFile(const APath: string): Boolean;
@@ -195,6 +201,8 @@ type
     property PauseInFullscreen: Boolean read GetPauseInFullscreen write SetPauseInFullscreen;
     property EnglishInSecureFields: Boolean read GetEnglishInSecureFields write SetEnglishInSecureFields;
     property DoubleCtrlEnabled: Boolean read GetDoubleCtrlEnabled write SetDoubleCtrlEnabled;
+    property EarlySwitchEnabled: Boolean read GetEarlySwitchEnabled write SetEarlySwitchEnabled;
+    property EarlySwitchLetters: Integer read GetEarlySwitchLetters write SetEarlySwitchLetters;
   end;
 
 var
@@ -206,7 +214,8 @@ uses
   Winapi.Windows,
   System.DateUtils,
   System.IOUtils,
-  System.JSON;
+  System.JSON,
+  System.Math;
 
 const
   SettingsSchemaVersion = 4;
@@ -387,6 +396,8 @@ begin
   FPauseInFullscreen := True;
   FEnglishInSecureFields := True;
   FDoubleCtrlEnabled := True;
+  FEarlySwitchEnabled := False;
+  FEarlySwitchLetters := EarlyLettersDefault;
   FCaseFixKept.Clear;
   FExclusions.Clear;
   FExclusions.Add('cmd.exe');
@@ -610,6 +621,34 @@ begin
   try FDoubleCtrlEnabled := AValue; finally FLock.Release; end;
 end;
 
+function TSettings.GetEarlySwitchEnabled: Boolean;
+begin
+  FLock.Acquire;
+  try Result := FEarlySwitchEnabled; finally FLock.Release; end;
+end;
+
+procedure TSettings.SetEarlySwitchEnabled(AValue: Boolean);
+begin
+  FLock.Acquire;
+  try FEarlySwitchEnabled := AValue; finally FLock.Release; end;
+end;
+
+function TSettings.GetEarlySwitchLetters: Integer;
+begin
+  FLock.Acquire;
+  try Result := FEarlySwitchLetters; finally FLock.Release; end;
+end;
+
+procedure TSettings.SetEarlySwitchLetters(AValue: Integer);
+begin
+  FLock.Acquire;
+  try
+    FEarlySwitchLetters := Min(Max(AValue, EarlyLettersMin), EarlyLettersMax);
+  finally
+    FLock.Release;
+  end;
+end;
+
 function TSettings.IsCaseFixKept(const AWord: string): Boolean;
 begin
   FLock.Acquire;
@@ -809,6 +848,10 @@ begin
     Root.TryGetValue<Boolean>('PauseInFullscreen', FPauseInFullscreen);
     Root.TryGetValue<Boolean>('EnglishInSecureFields', FEnglishInSecureFields);
     Root.TryGetValue<Boolean>('DoubleCtrlEnabled', FDoubleCtrlEnabled);
+    Root.TryGetValue<Boolean>('EarlySwitchEnabled', FEarlySwitchEnabled);
+    Root.TryGetValue<Integer>('EarlySwitchLetters', FEarlySwitchLetters);
+    FEarlySwitchLetters := Min(Max(FEarlySwitchLetters, EarlyLettersMin),
+      EarlyLettersMax);
 
     ArrayValue := Root.Values['CaseFixKept'] as TJSONArray;
     if ArrayValue <> nil then
@@ -1025,6 +1068,8 @@ begin
     Root.AddPair('PauseInFullscreen', TJSONBool.Create(FPauseInFullscreen));
     Root.AddPair('EnglishInSecureFields', TJSONBool.Create(FEnglishInSecureFields));
     Root.AddPair('DoubleCtrlEnabled', TJSONBool.Create(FDoubleCtrlEnabled));
+    Root.AddPair('EarlySwitchEnabled', TJSONBool.Create(FEarlySwitchEnabled));
+    Root.AddPair('EarlySwitchLetters', TJSONNumber.Create(FEarlySwitchLetters));
     KeptArray := TJSONArray.Create;
     for I := 0 to FCaseFixKept.Count - 1 do
       KeptArray.Add(FCaseFixKept[I]);

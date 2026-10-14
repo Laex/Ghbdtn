@@ -17,6 +17,10 @@ uses
   plausible; only the difference between two costs means anything. }
 function LetterModelCost(const ALower: string; ALang: TLangKind): Integer;
 
+{ The same cost for the beginning of a word still being typed: the word end
+  is not counted. }
+function LetterModelPrefixCost(const ALower: string; ALang: TLangKind): Integer;
+
 implementation
 
 const
@@ -572,7 +576,7 @@ begin
 end;
 
 function ModelCost(const AWord, ACosts: string; ALetters: Integer;
-  ARussian: Boolean): Integer;
+  ARussian: Boolean; AWithEnd: Boolean): Integer;
 var
   I, Rows, Width, Prev2, Prev, Next, Cell: Integer;
 begin
@@ -581,7 +585,7 @@ begin
   Width := ALetters + 2;
   Prev2 := 0;
   Prev := 0;
-  for I := 1 to Length(AWord) + 1 do
+  for I := 1 to Length(AWord) + Ord(AWithEnd) do
   begin
     if I > Length(AWord) then
       Next := ALetters + 1
@@ -599,12 +603,23 @@ begin
   end;
 end;
 
-function LetterModelCost(const ALower: string; ALang: TLangKind): Integer;
+function WordModelCost(const ALower: string; ALang: TLangKind;
+  AWithEnd: Boolean): Integer;
 begin
   if ALang = lkEN then
-    Result := ModelCost(ALower, EnglishCosts, EnglishLetters, False)
+    Result := ModelCost(ALower, EnglishCosts, EnglishLetters, False, AWithEnd)
   else
-    Result := ModelCost(ALower, RussianCosts, RussianLetters, True);
+    Result := ModelCost(ALower, RussianCosts, RussianLetters, True, AWithEnd);
+end;
+
+function LetterModelCost(const ALower: string; ALang: TLangKind): Integer;
+begin
+  Result := WordModelCost(ALower, ALang, True);
+end;
+
+function LetterModelPrefixCost(const ALower: string; ALang: TLangKind): Integer;
+begin
+  Result := WordModelCost(ALower, ALang, False);
 end;
 
 end.

@@ -781,6 +781,8 @@ type
     FPauseFullscreen: TSwitch;
     FEnglishSecure: TSwitch;
     FDoubleCtrl: TSwitch;
+    FEarlySwitch: TSwitch;
+    FEarlyLetters: TComboBox;
     FHintFlash: TSwitch;
     FHintAnimate: TSwitch;
     FMode: TComboBox;
@@ -917,6 +919,10 @@ begin
     'Две заглавные в начале слова (ТОлько -> Только)');
   FFixCapsLock := AddToggle(FMainPanel, AY,
     'Слово с нажатым Caps Lock (пРИВЕТ -> Привет)');
+  FEarlySwitch := AddToggle(FMainPanel, AY,
+    'Переключать раскладку, не дожидаясь конца слова');
+  FEarlyLetters := AddCombo(FMainPanel, AY, 'Букв до раннего переключения',
+    ['3', '4', '5', '6', '7', '8']);
   FEnglishSecure := AddToggle(FMainPanel, AY,
     'Английская раскладка в полях пароля и e-mail');
 
@@ -1125,6 +1131,8 @@ begin
   SetOn(FPauseFullscreen, AppSettings.PauseInFullscreen);
   SetOn(FEnglishSecure, AppSettings.EnglishInSecureFields);
   SetOn(FDoubleCtrl, AppSettings.DoubleCtrlEnabled);
+  SetOn(FEarlySwitch, AppSettings.EarlySwitchEnabled);
+  FEarlyLetters.ItemIndex := AppSettings.EarlySwitchLetters - EarlyLettersMin;
   SetOn(FHintFlash, AppSettings.CaretHintFlash);
   SetOn(FHintAnimate, AppSettings.CaretHintAnimate);
   FMode.ItemIndex := Ord(AppSettings.HeuristicMode);
@@ -1145,6 +1153,9 @@ begin
   AppSettings.PauseInFullscreen := FPauseFullscreen.Checked;
   AppSettings.EnglishInSecureFields := FEnglishSecure.Checked;
   AppSettings.DoubleCtrlEnabled := FDoubleCtrl.Checked;
+  AppSettings.EarlySwitchEnabled := FEarlySwitch.Checked;
+  if FEarlyLetters.ItemIndex >= 0 then
+    AppSettings.EarlySwitchLetters := FEarlyLetters.ItemIndex + EarlyLettersMin;
   AppSettings.CaretHintFlash := FHintFlash.Checked;
   AppSettings.CaretHintAnimate := FHintAnimate.Checked;
   if FMode.ItemIndex >= 0 then

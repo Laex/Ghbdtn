@@ -22,6 +22,12 @@ type
     Mark: TDecisionMark;
   end;
 
+const
+  // How many typed letters of a word the early switch waits for.
+  EarlyLettersMin = 3;
+  EarlyLettersMax = 8;
+  EarlyLettersDefault = 4;
+
 function AnalyzeWord(const AWord: string; ACurrentLang: TLangKind): TAnalysisResult; overload;
 function AnalyzeWord(const AWord: string; ACurrentLang: TLangKind;
   AMode: THeuristicMode; const ANeverSwitch: TNeverSwitchCallback): TAnalysisResult; overload;
@@ -32,6 +38,22 @@ function AnalyzeWord(const AWord: string; ACurrentLang: TLangKind;
   AMode: THeuristicMode; const ANeverSwitch: TNeverSwitchCallback;
   const APreferSwitch: TPreferSwitchCallback;
   const APhrase: TPhraseContext): TAnalysisResult; overload;
+{ Whether the beginning of a word that is still being typed is already clearly
+  text of the other layout. Only a prefix that starts no word of the typed
+  language and does start a word of the other one is switched. }
+function AnalyzeWordPrefix(const APrefix: string; ACurrentLang: TLangKind;
+  AMinLetters: Integer; AMode: THeuristicMode;
+  const ANeverSwitch: TNeverSwitchCallback): TAnalysisResult;
+{ ALine ends with a word of AWordLength characters that is being switched to
+  Russian. When one space before it stands a one- or two-letter word typed on
+  the English layout whose Russian text is a function word ("D yfxfkt": "D"
+  is "В"), the word is returned: a short word at the start of a phrase is
+  left alone by itself, but it belongs to the words after it. }
+function TryPrecedingShortWord(const ALine: string; AWordLength: Integer;
+  out AWord: string): Boolean;
+{ Three or more of the key that types "ё" on the Russian layout: a code fence
+  typed on the wrong layout. No Russian word looks like that. }
+function IsCodeFenceKeys(const AText: string): Boolean;
 function IsEnglishQuestionMarker(const AText: string): Boolean;
 function AnalyzeSelection(const AText: string; AMode: THeuristicMode;
   const ANeverSwitch: TNeverSwitchCallback): TAnalysisResult;
@@ -61,9 +83,12 @@ function NormalizeAnalyzedWord(const AWord: string): string;
 implementation
 
 uses
+  System.Math,
   Ghbdtn.Diagnostics,
   Ghbdtn.Heuristics,
-  Ghbdtn.Reading;
+  Ghbdtn.LetterModel,
+  Ghbdtn.Reading,
+  Ghbdtn.WordFreq;
 
 const
   // Quarter-bits (4 points = 1 bit) the other layout's reading must be ahead
@@ -80,6 +105,9 @@ const
   // types it with Shift on the same keys as "<" or "{", so code such as a<b
   // would otherwise read as a Russian word.
   InnerCapitalKeyCost = 48;
+  // The beginning of a word is judged only while it has at most this many
+  // letters.
+  EarlySwitchMaxLetters = 12;
   // The manual gesture switches a word unless what was typed is clearly the
   // better reading: the other reading may trail by this much (a negative
   // margin), so words the automatic rule refuses are still converted.
@@ -217,6 +245,16 @@ begin
     Result := AWord.ToLower;
 end;
 
+function IsCodeFenceKeys(const AText: string): Boolean;
+var
+  I: Integer;
+begin
+  Result := Length(AText) >= 3;
+  for I := 1 to Length(AText) do
+    if (AText[I] <> 'ё') and (AText[I] <> 'Ё') then
+      Exit(False);
+end;
+
 function IsProtectedToken(const S: string): Boolean;
 var
   I, LetterCount: Integer;
@@ -307,6 +345,14 @@ begin
   begin
     Result.Mark := dmLearning;
     TraceHeuristic(Head + ' reason=never_switch switch=0');
+    Exit;
+  end;
+  if (ACurrentLang <> lkEN) and IsCodeFenceKeys(AWord) then
+  begin
+    Result.NeedsSwitch := True;
+    Result.TargetLang := lkEN;
+    Result.ConvertedText := ConvertStringSwap(AWord);
+    TraceHeuristic(Head + ' reason=code_fence switch=1 target=EN');
     Exit;
   end;
   if IsProtectedToken(CleanW) then
@@ -452,6 +498,100 @@ function AnalyzeWord(const AWord: string;
   ACurrentLang: TLangKind): TAnalysisResult;
 begin
   Result := AnalyzeWord(AWord, ACurrentLang, hmBalanced, nil);
+end;
+
+function IsPlainLayoutLetters(const AText: string; ALayout: TLangKind): Boolean;
+var
+  I: Integer;
+  C: Char;
+begin
+  Result := AText <> '';
+  for I := 1 to Length(AText) do
+  begin
+    C := AText[I];
+    if ALayout = lkEN then
+    begin
+      if not CharInSet(C, ['a'..'z', 'A'..'Z']) then
+        Exit(False);
+    end
+    else if not (((C >= 'а') and (C <= 'я')) or
+      ((C >= 'А') and (C <= 'Я'))) then
+      Exit(False);
+  end;
+end;
+
+function TryPrecedingShortWord(const ALine: string; AWordLength: Integer;
+  out AWord: string): Boolean;
+var
+  Head: string;
+  WordEnd, I: Integer;
+begin
+  Result := False;
+  AWord := '';
+  if (AWordLength <= 0) or (AWordLength >= Length(ALine)) then
+    Exit;
+  Head := Copy(ALine, 1, Length(ALine) - AWordLength);
+  WordEnd := Length(Head) - 1;
+  if (WordEnd < 1) or (Head[Length(Head)] <> ' ') then
+    Exit;
+  I := WordEnd;
+  while (I >= 1) and CharInSet(Head[I], ['a'..'z', 'A'..'Z']) do
+    Dec(I);
+  if (WordEnd - I < 1) or (WordEnd - I > 2) then
+    Exit;
+  if (I >= 1) and not CharInSet(Head[I], [' ', #9, #10, #13, ',', ';', ':',
+    '!', '?', '(', '"']) then
+    Exit;
+  AWord := Copy(Head, I + 1, WordEnd - I);
+  Result := IsRussianFunctionWord(ConvertStringSwap(AWord).ToLower);
+  if not Result then
+    AWord := '';
+end;
+
+function AnalyzeWordPrefix(const APrefix: string; ACurrentLang: TLangKind;
+  AMinLetters: Integer; AMode: THeuristicMode;
+  const ANeverSwitch: TNeverSwitchCallback): TAnalysisResult;
+var
+  Lower, OtherText, Head: string;
+  OtherLayout: TLangKind;
+  Margin, Delta: Integer;
+begin
+  Result.NeedsSwitch := False;
+  Result.TargetLang := lkUnknown;
+  Result.ConvertedText := '';
+  Result.Mark := dmNone;
+  if not (ACurrentLang in [lkEN, lkRU]) or
+     (Length(APrefix) < Max(AMinLetters, EarlyLettersMin)) or
+     (Length(APrefix) > EarlySwitchMaxLetters) or
+     not IsPlainLayoutLetters(APrefix, ACurrentLang) or
+     IsProtectedToken(APrefix) then
+    Exit;
+  if ACurrentLang = lkEN then
+    OtherLayout := lkRU
+  else
+    OtherLayout := lkEN;
+  Lower := APrefix.ToLower;
+  if Assigned(ANeverSwitch) and ANeverSwitch(Lower) then
+    Exit;
+  OtherText := ConvertStringSwap(Lower);
+  if not IsPlainLayoutLetters(OtherText, OtherLayout) or
+     not HasVowel(OtherText, OtherLayout) or
+     HasWordWithPrefix(Lower, ACurrentLang) or
+     not HasWordWithPrefix(OtherText, OtherLayout) then
+    Exit;
+  Margin := SwitchMargin(AMode, True);
+  Delta := LetterModelPrefixCost(Lower, ACurrentLang) -
+    LetterModelPrefixCost(OtherText, OtherLayout);
+  if Delta >= Margin then
+  begin
+    Result.NeedsSwitch := True;
+    Result.TargetLang := OtherLayout;
+    Result.ConvertedText := ConvertStringSwap(APrefix);
+  end;
+  Head := 'prefix=' + QuoteTrace(Lower) + ' layout=' + LayoutToken(ACurrentLang) +
+    ' mode=' + ModeToken(AMode);
+  TraceHeuristic(Head + ' reason=early margin=' + IntToStr(Margin) +
+    ' delta=' + IntToStr(Delta) + ' switch=' + IntToStr(Ord(Result.NeedsSwitch)));
 end;
 
 function IsEnglishQuestionMarker(const AText: string): Boolean;

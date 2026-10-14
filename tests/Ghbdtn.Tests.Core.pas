@@ -133,6 +133,26 @@ type
     [Test]
     procedure DetectsShortKnownWrongLayoutWords;
     [Test]
+    procedure SwitchesCodeFenceTypedOnRussianLayout;
+    [Test]
+    procedure KeepsRussianInterjectionAndShortRuns;
+    [Test]
+    procedure SwitchesRussianPrefixTypedOnEnglishLayout;
+    [Test]
+    procedure SwitchesEnglishPrefixTypedOnRussianLayout;
+    [Test]
+    procedure KeepsPrefixThatStartsATypedWord;
+    [Test]
+    procedure FindsShortWordBeforeConvertedWord;
+    [Test]
+    procedure IgnoresPrecedingWordThatIsNotAShortFunctionWord;
+    [Test]
+    procedure WaitsForConfiguredNumberOfLetters;
+    [Test]
+    procedure KeepsPrefixBelowMinimumLength;
+    [Test]
+    procedure KeepsPrefixOfProtectedOrLearnedWord;
+    [Test]
     procedure SelectionConversionDoesNotUndoCorrectRussian;
     [Test]
     procedure ManualSelectionSwapsOneScriptAndKeepsTheOther;
@@ -881,6 +901,136 @@ begin
 
   Analysis := AnalyzeWord('как', lkRU);
   Assert.IsFalse(Analysis.NeedsSwitch);
+end;
+
+procedure TAnalyzerTests.SwitchesCodeFenceTypedOnRussianLayout;
+var
+  Analysis: TAnalysisResult;
+begin
+  Analysis := AnalyzeWord('ёёё', lkRU);
+  Assert.IsTrue(Analysis.NeedsSwitch);
+  Assert.AreEqual(Integer(lkEN), Integer(Analysis.TargetLang));
+  Assert.AreEqual('```', Analysis.ConvertedText);
+
+  Analysis := AnalyzeWord('ЁЁЁЁ', lkRU);
+  Assert.IsTrue(Analysis.NeedsSwitch);
+  Assert.AreEqual('~~~~', Analysis.ConvertedText);
+end;
+
+procedure TAnalyzerTests.KeepsRussianInterjectionAndShortRuns;
+begin
+  Assert.IsFalse(AnalyzeWord('ээ', lkRU).NeedsSwitch);
+  Assert.IsFalse(AnalyzeWord('ЭЭ', lkRU).NeedsSwitch);
+  Assert.IsFalse(AnalyzeWord('ёё', lkRU).NeedsSwitch);
+  Assert.IsFalse(AnalyzeWord('```', lkEN).NeedsSwitch);
+  Assert.IsTrue(IsCodeFenceKeys('ёёё'));
+  Assert.IsFalse(IsCodeFenceKeys('ёё'));
+  Assert.IsFalse(IsCodeFenceKeys('ёёз'));
+end;
+
+procedure TAnalyzerTests.SwitchesRussianPrefixTypedOnEnglishLayout;
+var
+  Analysis: TAnalysisResult;
+begin
+  Analysis := AnalyzeWordPrefix('ghbd', lkEN, EarlyLettersDefault, hmBalanced, nil);
+  Assert.IsTrue(Analysis.NeedsSwitch);
+  Assert.AreEqual(Integer(lkRU), Integer(Analysis.TargetLang));
+  Assert.AreEqual('прив', Analysis.ConvertedText);
+
+  Analysis := AnalyzeWordPrefix('Ghbdtn', lkEN, EarlyLettersDefault, hmBalanced, nil);
+  Assert.IsTrue(Analysis.NeedsSwitch);
+  Assert.AreEqual('Привет', Analysis.ConvertedText);
+
+  Analysis := AnalyzeWordPrefix('cgfcb', lkEN, EarlyLettersDefault, hmBalanced, nil);
+  Assert.IsTrue(Analysis.NeedsSwitch);
+  Assert.AreEqual('спаси', Analysis.ConvertedText);
+end;
+
+procedure TAnalyzerTests.SwitchesEnglishPrefixTypedOnRussianLayout;
+var
+  Analysis: TAnalysisResult;
+begin
+  Analysis := AnalyzeWordPrefix('цщкд', lkRU, EarlyLettersDefault, hmBalanced, nil);
+  Assert.IsTrue(Analysis.NeedsSwitch);
+  Assert.AreEqual(Integer(lkEN), Integer(Analysis.TargetLang));
+  Assert.AreEqual('worl', Analysis.ConvertedText);
+
+  Analysis := AnalyzeWordPrefix('Пщщпд', lkRU, EarlyLettersDefault, hmBalanced, nil);
+  Assert.IsTrue(Analysis.NeedsSwitch);
+  Assert.AreEqual('Googl', Analysis.ConvertedText);
+end;
+
+procedure TAnalyzerTests.KeepsPrefixThatStartsATypedWord;
+const
+  EnglishPrefixes: array[0..5] of string = ('hell', 'chec', 'ghos', 'rece',
+    'thin', 'pass');
+  RussianPrefixes: array[0..2] of string = ('прив', 'раб', 'сегодн');
+var
+  Prefix: string;
+begin
+  for Prefix in EnglishPrefixes do
+    Assert.IsFalse(AnalyzeWordPrefix(Prefix, lkEN, EarlyLettersDefault, hmBalanced, nil).NeedsSwitch,
+      Prefix);
+  for Prefix in RussianPrefixes do
+    Assert.IsFalse(AnalyzeWordPrefix(Prefix, lkRU, EarlyLettersDefault, hmBalanced, nil).NeedsSwitch,
+      Prefix);
+end;
+
+procedure TAnalyzerTests.FindsShortWordBeforeConvertedWord;
+var
+  Prev: string;
+begin
+  Assert.IsTrue(TryPrecedingShortWord('D yfxfkt', 6, Prev));
+  Assert.AreEqual('D', Prev);
+  Assert.IsTrue(TryPrecedingShortWord('привет, Yt yfxfkt', 6, Prev));
+  Assert.AreEqual('Yt', Prev);
+  Assert.IsTrue(TryPrecedingShortWord('text (d yfxfkt', 6, Prev));
+  Assert.AreEqual('d', Prev);
+end;
+
+procedure TAnalyzerTests.IgnoresPrecedingWordThatIsNotAShortFunctionWord;
+var
+  Prev: string;
+begin
+  // "I" and "a" are not Russian function words once swapped.
+  Assert.IsFalse(TryPrecedingShortWord('I yfxfkt', 6, Prev));
+  Assert.IsFalse(TryPrecedingShortWord('a yfxfkt', 6, Prev));
+  // Three letters or more are judged as words by the analyzer.
+  Assert.IsFalse(TryPrecedingShortWord('the yfxfkt', 6, Prev));
+  // Part of a longer token or no space between.
+  Assert.IsFalse(TryPrecedingShortWord('x-d yfxfkt', 6, Prev));
+  Assert.IsFalse(TryPrecedingShortWord('Dyfxfkt', 6, Prev));
+  Assert.IsFalse(TryPrecedingShortWord('yfxfkt', 6, Prev));
+  Assert.IsFalse(TryPrecedingShortWord('d  yfxfkt', 6, Prev));
+end;
+
+procedure TAnalyzerTests.WaitsForConfiguredNumberOfLetters;
+begin
+  Assert.IsFalse(AnalyzeWordPrefix('ghbd', lkEN, 5, hmBalanced, nil).NeedsSwitch);
+  Assert.IsTrue(AnalyzeWordPrefix('ghbdt', lkEN, 5, hmBalanced, nil).NeedsSwitch);
+  Assert.IsFalse(AnalyzeWordPrefix('ghb', lkEN, 4, hmBalanced, nil).NeedsSwitch);
+  // Below the lowest setting the lowest one applies.
+  Assert.IsFalse(AnalyzeWordPrefix('gh', lkEN, 1, hmBalanced, nil).NeedsSwitch);
+  Assert.IsFalse(AnalyzeWordPrefix('ghbdtn', lkEN, EarlyLettersMax, hmBalanced,
+    nil).NeedsSwitch);
+end;
+
+procedure TAnalyzerTests.KeepsPrefixBelowMinimumLength;
+begin
+  Assert.IsFalse(AnalyzeWordPrefix('ghb', lkEN, EarlyLettersDefault, hmBalanced, nil).NeedsSwitch);
+  Assert.IsFalse(AnalyzeWordPrefix('', lkEN, EarlyLettersDefault, hmBalanced, nil).NeedsSwitch);
+  Assert.IsFalse(AnalyzeWordPrefix('ghbd', lkUnknown, EarlyLettersDefault, hmBalanced, nil).NeedsSwitch);
+end;
+
+procedure TAnalyzerTests.KeepsPrefixOfProtectedOrLearnedWord;
+begin
+  Assert.IsFalse(AnalyzeWordPrefix('GHBD', lkEN, EarlyLettersDefault, hmBalanced, nil).NeedsSwitch);
+  Assert.IsFalse(AnalyzeWordPrefix('ghb1', lkEN, EarlyLettersDefault, hmBalanced, nil).NeedsSwitch);
+  Assert.IsFalse(AnalyzeWordPrefix('ghbd', lkEN, EarlyLettersDefault, hmBalanced,
+    function(const AWord: string): Boolean
+    begin
+      Result := AWord = 'ghbd';
+    end).NeedsSwitch);
 end;
 
 procedure TAnalyzerTests.DetectsShortKnownWrongLayoutWords;

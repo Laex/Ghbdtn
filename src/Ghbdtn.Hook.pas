@@ -83,6 +83,9 @@ type
     FCaseFixTick: UInt64;
     FIgnoredTapTick: UInt64;
     FLineText: string;
+    FEarlyActive: Boolean;
+    FEarlyBlocked: Boolean;
+    FEarlyLang: TLangKind;
     FCtrlDown: Boolean;
     FCtrlClean: Boolean;
     FCtrlDownTick: UInt64;
@@ -131,11 +134,18 @@ type
     function HandleWordDelimiter(ALang: TLangKind; VKCode: DWORD;
       APunctuation: Char): Boolean;
     procedure LineAppend(AChar: Char);
+    function TryLastWordBeforeSpaces(var AItem: TInputWorkItem;
+      out AWord: string): Boolean;
     procedure LineReplaceTail(AOldLength: Integer; const ANewText: string);
     procedure NoteLineDelimiter(AVKCode: DWORD; APunctuation: Char);
     procedure TrackCtrlTap(AIsKeyDown, AIsKeyUp: Boolean);
     procedure HandleDoubleCtrl;
-    procedure HandlePrintableKey(VKCode: DWORD; ALang: TLangKind);
+    function HandlePrintableKey(VKCode: DWORD; ALang: TLangKind): Boolean;
+    function TryEarlySwitch(AVKCode: DWORD; ALang: TLangKind;
+      const AProfile: TApplicationProfile): Boolean;
+    procedure ClearEarlySwitch;
+    function TryShortWordBefore(AWordLength: Integer; out AExtraOld: Integer;
+      out APrefix: string): Boolean;
     function CurrentApplicationEnabled: Boolean;
     function IsFullscreenPaused: Boolean;
     procedure QueueTextCommand(AMode: TCaseMode;
@@ -201,6 +211,7 @@ const
   LeftShiftMaxInterval = 650;
   CtrlTapMaxHoldMs = 400;
   MaxLineChars = 512;
+  CodeFenceKeyCount = 3;
   FullscreenCheckMs = 500;
   SelectionArmWindowMs = 4000;
   MouseDragSlop = 4;
@@ -469,6 +480,7 @@ end;
 procedure TKbdHookManager.ResetContext;
 begin
   FInputBuffer.Clear;
+  ClearEarlySwitch;
   FLineText := '';
   FCtrlClean := False;
   FCtrlTapTick := 0;
@@ -887,6 +899,7 @@ var
   Item: TInputWorkItem;
 begin
   Item := AItem;
+  FEarlyLang := lkUnknown;
   if Item.Kind in [iwReplaceWord, iwReplaceSelection, iwReplaceBeforeCaret,
     iwSwitchLayout] then
     FSuppressLayoutSoundUntil := GetTickCount64 + 500;
@@ -1011,6 +1024,53 @@ begin
   Result := (AOriginal <> '') and (AConverted <> '');
 end;
 
+{ The word typed just before the spaces that now precede the caret, flipped
+  to the other layout together with those spaces. }
+function TKbdHookManager.TryLastWordBeforeSpaces(var AItem: TInputWorkItem;
+  out AWord: string): Boolean;
+var
+  Tail, WordEnd, WordStart, I: Integer;
+  HasLetter: Boolean;
+  Original, Converted: string;
+begin
+  Result := False;
+  AWord := '';
+  Tail := Length(FLineText);
+  WordEnd := Tail;
+  while (WordEnd > 0) and CharInSet(FLineText[WordEnd], [' ', #9]) do
+    Dec(WordEnd);
+  if (WordEnd = 0) or (WordEnd = Tail) then
+    Exit;
+  WordStart := WordEnd;
+  while (WordStart > 1) and not CharInSet(FLineText[WordStart - 1], [' ', #9, #10, #13]) do
+    Dec(WordStart);
+  HasLetter := False;
+  for I := WordStart to WordEnd do
+    if FLineText[I].IsLetter then
+    begin
+      HasLetter := True;
+      Break;
+    end;
+  if not HasLetter then
+    Exit;
+  AWord := Copy(FLineText, WordStart, WordEnd - WordStart + 1);
+  Original := Copy(FLineText, WordStart, Tail - WordStart + 1);
+  Converted := ConvertStringSwap(AWord) + Copy(FLineText, WordEnd + 1, Tail - WordEnd);
+  if Converted = Original then
+  begin
+    AWord := '';
+    Exit;
+  end;
+  AItem.Kind := iwReplaceBeforeCaret;
+  AItem.OldWordLength := CaretStepCount(Original);
+  AItem.ExpectedText := Original;
+  AItem.NewText := Converted;
+  AItem.SwitchLayoutAfter := True;
+  LineReplaceTail(Length(Original), Converted);
+  ClearLastConversion;
+  Result := True;
+end;
+
 procedure TKbdHookManager.HandleDoubleLeftShift;
 var
   Item: TInputWorkItem;
@@ -1044,16 +1104,23 @@ begin
     Item.NewText := ConvertStringSwap(FInputBuffer.BufferText);
     if Item.NewText <> FInputBuffer.BufferText then
     begin
-      ManualWord := FInputBuffer.BufferText;
-      FLastTypedWord := ManualWord;
-      FLastConvertedText := Item.NewText;
-      FLastConvertedLen := Length(Item.NewText);
-      FLastConversionTick := GetTickCount64;
-      FConversionLesson := LessonNone;
+      // The prefix switched early is put back; the rest of the word is typed
+      // as it comes and is not taught as a word to switch.
+      if not FEarlyActive then
+      begin
+        ManualWord := FInputBuffer.BufferText;
+        FLastTypedWord := ManualWord;
+        FLastConvertedText := Item.NewText;
+        FLastConvertedLen := Length(Item.NewText);
+        FLastConversionTick := GetTickCount64;
+        FConversionLesson := LessonNone;
+      end;
       FBackspaceRun := 0;
       SettlePendingPhrase(True);
       RememberPhraseLanguage(FPhrase, Item.TargetLang);
     end;
+    FEarlyActive := False;
+    FEarlyBlocked := True;
     FInputBuffer.Clear;
   end
   else if TryUndoCaseFix(Item) then
@@ -1085,6 +1152,11 @@ begin
     Item.TargetLang := CurrentLang;
     Item.PlaySwitchSound := False;
     ClearLastConversion;
+  end
+  else if TryLastWordBeforeSpaces(Item, ManualWord) then
+  begin
+    // The caret stands after the space that ended the word, so the word is
+    // no longer in the input buffer; it is taken from the typed line.
   end
   else
   begin
@@ -1435,6 +1507,8 @@ begin
   if FLineText <> '' then
     Delete(FLineText, Length(FLineText), 1);
   FInputBuffer.RemoveLastChar;
+  if FEarlyActive and FInputBuffer.IsEmpty then
+    FEarlyBlocked := True;
   Inc(FBackspaceRun);
   FQuestionFixPending := False;
   FAwaitQuestionSpace := False;
@@ -1531,9 +1605,12 @@ var
   Profile: TApplicationProfile;
   ProcessName: string;
   QuestionArmed: Boolean;
-  MarkerText: string;
+  MarkerText, ShortPrefix: string;
+  ShortExtra: Integer;
 begin
   Result := False;
+  ShortExtra := 0;
+  ShortPrefix := '';
   if FInputBuffer.IsEmpty then
   begin
     // Another delimiter after a correction or a selection conversion: the
@@ -1561,7 +1638,9 @@ begin
   FQuestionFixPending := False;
   FAwaitQuestionSpace := False;
   Profile := CurrentProfile;
-  if Profile.AutoSwitchEnabled then
+  // The pause stops the automatic corrections; the typed text is still
+  // followed, so the manual gestures keep working.
+  if Profile.AutoSwitchEnabled and not FGloballyPaused then
   begin
     ProcessName := LearningProcessName;
     NeverSwitch :=
@@ -1596,7 +1675,15 @@ begin
       begin
         Item.OldWordLength := Item.OldWordLength + 2;
         Item.NewText := ', ' + Analysis.ConvertedText;
-      end;
+      end
+      else if (Analysis.TargetLang = lkRU) and
+        TryShortWordBefore(Length(MarkerText), ShortExtra, ShortPrefix) then
+      begin
+        Item.OldWordLength := Item.OldWordLength + ShortExtra;
+        Item.NewText := ShortPrefix + Analysis.ConvertedText;
+      end
+      else
+        ShortExtra := 0;
       if APunctuation <> #0 then
       begin
         // "?" and "/" on the English layout are the Russian "," and ".".
@@ -1611,9 +1698,11 @@ begin
         Item.TrailingKey := Word(VKCode);
       Item.TargetLang := Analysis.TargetLang;
       Item.PlaySwitchSound := Profile.SoundOnSwitch;
-      FLastConvertedText := Analysis.ConvertedText;
-      FLastConvertedLen := Length(Analysis.ConvertedText);
-      LineReplaceTail(Length(MarkerText), Analysis.ConvertedText);
+      if ShortExtra = 0 then
+        ShortPrefix := '';
+      FLastConvertedText := ShortPrefix + Analysis.ConvertedText;
+      FLastConvertedLen := Length(FLastConvertedText);
+      LineReplaceTail(Length(MarkerText) + ShortExtra, FLastConvertedText);
       FLastConversionTick := GetTickCount64;
       FLastTypedWord := MarkerText;
       FConversionLesson := LessonNone;
@@ -1626,6 +1715,16 @@ begin
     begin
       SettlePendingPhrase(True);
       RememberCommittedWord(ALang, MarkerText);
+      if FEarlyActive then
+      begin
+        // The word whose beginning was switched is tracked like a converted
+        // word: a later double Left Shift or a rejection refers to all of it.
+        FLastTypedWord := ConvertStringSwap(MarkerText);
+        FLastConvertedText := MarkerText;
+        FLastConvertedLen := Length(MarkerText);
+        FLastConversionTick := GetTickCount64;
+        FConversionLesson := LessonNone;
+      end;
       if (APunctuation = '?') and IsEnglishQuestionMarker(MarkerText + '?') then
         FAwaitQuestionSpace := True;
       if ((ALang <> lkEN) or not CharInSet(APunctuation, ['?', '/'])) and
@@ -1646,7 +1745,32 @@ function TKbdHookManager.HandleWordDelimiter(ALang: TLangKind;
   VKCode: DWORD; APunctuation: Char): Boolean;
 begin
   Result := HandleWordDelimiterCore(ALang, VKCode, APunctuation);
+  ClearEarlySwitch;
   NoteLineDelimiter(VKCode, APunctuation);
+end;
+
+{ The short word typed on the English layout right before the word being
+  switched to Russian is switched with it ("D yfxfkt" -> "В начале"). }
+function TKbdHookManager.TryShortWordBefore(AWordLength: Integer;
+  out AExtraOld: Integer; out APrefix: string): Boolean;
+var
+  Short: string;
+begin
+  AExtraOld := 0;
+  APrefix := '';
+  Result := TryPrecedingShortWord(FLineText, AWordLength, Short) and
+    not AppSettings.IsNeverSwitchWord(Short.ToLower, LearningProcessName);
+  if not Result then
+    Exit;
+  AExtraOld := Length(Short) + 1;
+  APrefix := ConvertStringSwap(Short) + ' ';
+end;
+
+procedure TKbdHookManager.ClearEarlySwitch;
+begin
+  FEarlyActive := False;
+  FEarlyBlocked := False;
+  FEarlyLang := lkUnknown;
 end;
 
 { FLineText is what was typed since the caret last moved. The double Ctrl
@@ -1787,18 +1911,94 @@ begin
   EnqueueWork(Item);
 end;
 
-procedure TKbdHookManager.HandlePrintableKey(VKCode: DWORD; ALang: TLangKind);
+{ After a few letters typed on the wrong layout the word is switched without
+  waiting for the space: the typed letters are replaced by their text on the
+  other layout and the layout changes, so the rest of the word is typed on the
+  right one. The key that completes the prefix is swallowed and typed as part
+  of the replacement. A double Left Shift put the word back. }
+function TKbdHookManager.TryEarlySwitch(AVKCode: DWORD; ALang: TLangKind;
+  const AProfile: TApplicationProfile): Boolean;
+var
+  Analysis: TAnalysisResult;
+  Item: TInputWorkItem;
+  NeverSwitch: TNeverSwitchCallback;
+  ProcessName, Typed, ShortPrefix: string;
+  I, ShortExtra: Integer;
+begin
+  Result := False;
+  if FEarlyActive or FEarlyBlocked or FGloballyPaused or
+     not AProfile.AutoSwitchEnabled then
+    Exit;
+  Typed := FInputBuffer.BufferText;
+  if (ALang <> lkEN) and (Length(Typed) = CodeFenceKeyCount) and
+     IsCodeFenceKeys(Typed) then
+  begin
+    // A code fence typed on the Russian layout is switched at once, whether
+    // or not the early switch of other words is on.
+    Analysis.NeedsSwitch := True;
+    Analysis.TargetLang := lkEN;
+    Analysis.ConvertedText := ConvertStringSwap(Typed);
+  end
+  else
+  begin
+    if not AppSettings.EarlySwitchEnabled then
+      Exit;
+    ProcessName := LearningProcessName;
+    NeverSwitch :=
+      function(const AWord: string): Boolean
+      begin
+        Result := AppSettings.IsNeverSwitchWord(AWord, ProcessName);
+      end;
+    Analysis := AnalyzeWordPrefix(Typed, ALang, AppSettings.EarlySwitchLetters,
+      AProfile.HeuristicMode, NeverSwitch);
+    if not Analysis.NeedsSwitch then
+      Exit;
+  end;
+  FillChar(Item, SizeOf(Item), 0);
+  Item.Kind := iwReplaceWord;
+  Item.TargetWindow := GetForegroundWindow;
+  // The last typed letter is held back, so it is not on the screen yet.
+  Item.OldWordLength := Length(Typed) - 1;
+  Item.NewText := Analysis.ConvertedText;
+  ShortExtra := 0;
+  ShortPrefix := '';
+  if (Analysis.TargetLang = lkRU) and
+     TryShortWordBefore(Length(Typed), ShortExtra, ShortPrefix) then
+  begin
+    Inc(Item.OldWordLength, ShortExtra);
+    Item.NewText := ShortPrefix + Item.NewText;
+  end;
+  Item.TargetLang := Analysis.TargetLang;
+  Item.PlaySwitchSound := AProfile.SoundOnSwitch;
+  LineReplaceTail(Length(Typed) + ShortExtra, Item.NewText);
+  FInputBuffer.Clear;
+  for I := 1 to Length(Analysis.ConvertedText) do
+    FInputBuffer.AddChar(Analysis.ConvertedText[I], Analysis.TargetLang);
+  FConsumedDelimiterVK := Word(AVKCode);
+  EnqueueWork(Item);
+  FEarlyActive := True;
+  FEarlyLang := Analysis.TargetLang;
+  Result := True;
+end;
+
+function TKbdHookManager.HandlePrintableKey(VKCode: DWORD;
+  ALang: TLangKind): Boolean;
 var
   Shifted: Boolean;
   Ch: Char;
   Profile: TApplicationProfile;
 begin
+  Result := False;
   ClearLastCase;
   Profile := CurrentProfile;
   if (ALang = lkRU) and Profile.SoundOnRussianInput then
     PlayKeyClickRU;
   if FInputBuffer.IsEmpty then
+  begin
+    FEarlyActive := False;
+    FEarlyLang := lkUnknown;
     ClearCaseFix;
+  end;
   if FInputBuffer.IsEmpty and (FLastConvertedText <> '') then
     NoteConversionKept;
   Shifted := ((GetKeyState(VK_SHIFT) and $8000) <> 0) xor
@@ -1809,6 +2009,7 @@ begin
   begin
     FInputBuffer.AddChar(Ch, ALang);
     LineAppend(Ch);
+    Result := TryEarlySwitch(VKCode, ALang, Profile);
   end;
   FBackspaceRun := 0;
 end;
@@ -1860,6 +2061,7 @@ begin
   if AInput.VirtualKey in [VK_SPACE, VK_RETURN, VK_TAB] then
   begin
     NoteLineDelimiter(AInput.VirtualKey, #0);
+    ClearEarlySwitch;
     FInputBuffer.Clear;
     FBackspaceRun := 0;
     Exit;
@@ -1870,7 +2072,9 @@ begin
      (AInput.VirtualKey = VK_ADD) or
      (AInput.VirtualKey = VK_SUBTRACT) then
   begin
-    CurrentLang := GetForegroundLangKind;
+    CurrentLang := FEarlyLang;
+    if CurrentLang = lkUnknown then
+      CurrentLang := GetForegroundLangKind;
     Shifted := ((GetAsyncKeyState(VK_SHIFT) and $8000) <> 0) xor
       ((GetKeyState(VK_CAPITAL) and 1) <> 0);
     if KeyedWordSeparator(AInput.VirtualKey, Shifted, CurrentLang) <> #0 then
@@ -1965,8 +2169,6 @@ begin
       FPauseKeyDown := False;
     Exit(True);
   end;
-  if FGloballyPaused then
-    Exit;
 
   if IsFocusedPasswordField then
   begin
@@ -2073,7 +2275,8 @@ begin
   end;
   if ((Kbd^.vkCode >= $30) and (Kbd^.vkCode <= $5A)) or
      ((Kbd^.vkCode >= VK_OEM_1) and (Kbd^.vkCode <= VK_OEM_7)) then
-    HandlePrintableKey(Kbd^.vkCode, CurrentLang);
+    if HandlePrintableKey(Kbd^.vkCode, CurrentLang) then
+      Exit(True);
   except
     on E: Exception do
     begin
