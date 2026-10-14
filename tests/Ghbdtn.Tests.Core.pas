@@ -11,6 +11,9 @@ uses
   DUnitX.TestFramework,
   Ghbdtn.Layout,
   Ghbdtn.Analyzer,
+  Ghbdtn.Reading,
+  Ghbdtn.LetterModel,
+  Ghbdtn.WordFreq,
   Ghbdtn.Buffer,
   Ghbdtn.Clipboard,
   Ghbdtn.Colors,
@@ -44,6 +47,8 @@ type
     procedure MapsEnglishSymbolKeysToRussianLetters;
     [Test]
     procedure MapsMinusAndPlusOnBothLayouts;
+    [Test]
+    procedure MarksTheKeysThatTypeRussianLetters;
   end;
 
   [TestFixture]
@@ -77,6 +82,23 @@ type
     procedure KeepsRussianWordsTypedInRussian;
     [Test]
     procedure KeepsEnglishWordsTypedInEnglish;
+    [Test]
+    procedure DetectsRussianWordsWithLettersOnPunctuationKeys;
+  end;
+
+  [TestFixture]
+  TReadingTests = class
+  public
+    [Test]
+    procedure LetterModelPrefersTextOfItsOwnLanguage;
+    [Test]
+    procedure WordListKnowsFrequentWordsOfEachLanguage;
+    [Test]
+    procedure ListedWordIsAsCheapAsItsListCost;
+    [Test]
+    procedure EnglishReadingMayGiveUpEdgeKeysAtAPrice;
+    [Test]
+    procedure RussianReadingKeepsEveryKey;
   end;
 
   [TestFixture]
@@ -115,6 +137,8 @@ type
     [Test]
     procedure ManualSelectionSwapsOneScriptAndKeepsTheOther;
     [Test]
+    procedure ManualConversionIsBolderThanAutomatic;
+    [Test]
     procedure WordAtCaretReadsTheWordUnderTheCaret;
     [Test]
     procedure InvertsEachLetterCase;
@@ -134,6 +158,14 @@ type
     procedure ConvertsRussianTailAfterEnglishPrefix;
     [Test]
     procedure UsesHigherMarginForUnknownLayout;
+    [Test]
+    procedure ConvertsWordsWithLettersOnPunctuationKeys;
+    [Test]
+    procedure KeepsEnglishWordsWithPunctuationAroundThem;
+    [Test]
+    procedure KeepsTokensThatReadAsNoWord;
+    [Test]
+    procedure ConvertsRussianAbbreviationOfTheWordList;
   end;
 
   [TestFixture]
@@ -271,8 +303,6 @@ type
     procedure DetectsPasswordControlStyle;
     [Test]
     procedure SkipsAutomationProbeForClassicEdits;
-    [Test]
-    procedure RussianLettersOnPunctuationKeysStayInTheWord;
     [Test]
     procedure ColonAfterOneLetterDoesNotSwitch;
   end;
@@ -462,10 +492,27 @@ const
     'ranger ';
 
 const
+  // Frequent words with a letter on one of the punctuation keys of the
+  // English layout: б ю ж э х ъ.
+  RussianKeySample =
+    'области входит июня футболист октября ноября декабря находится сентября более июля ' +
+    'годах республики область союза олимпийских альбом других которых рамках берегу двух ' +
+    'расположен этом этого сборной расположена играх летних губернии клуба сборную губерния ' +
+    'заслуженный являются образование этой михайлович журналист наиболее южной населенных ' +
+    'победитель поэт образования клуб включает трех нескольких первых помощью общине данных ' +
+    'кубка частью самых общества состоянию обычно таких париж женщин позже включая некоторых ' +
+    'художник араб футбольный режиссера британский футболу ходе общество движения благодаря ' +
+    'входила жителей этих джон этим собор гражданской полностью имеют крупнейших большинство ' +
+    'мужчин жанре республика корабль общественный нападающий своих община многих эпохи ' +
+    'крупных архиепископ бассейна персонаж особенно азербайджана михаил британской службы ' +
+    'различных работ сборная расположено альбома ';
+
+const
   // Percent of a sample the heuristic must catch when typed in the wrong
   // layout, and may wrongly touch when typed in the right one.
-  MinRussianDetected = 95;
+  MinRussianDetected = 97;
   MinEnglishDetected = 95;
+  MinKeyLettersDetected = 95;
   MaxRussianFalse = 1;
   MaxEnglishFalse = 1;
 { TDetectionTests }
@@ -519,6 +566,152 @@ var
 begin
   CountDetections(EnglishSample, False, lkEN, Flagged, Total);
   Assert.IsTrue(Flagged * 100 <= Total * MaxEnglishFalse, Format('%d of %d', [Flagged, Total]));
+end;
+
+procedure TLayoutTests.MarksTheKeysThatTypeRussianLetters;
+var
+  C: Char;
+begin
+  for C in ',.;''[]`<>"{}~' do
+    Assert.IsTrue(IsRussianLetterKey(C), C);
+  for C in 'abcxyzABCXYZ0123456789 -_=/\?:!@#$%^&*()+' do
+    Assert.IsFalse(IsRussianLetterKey(C), C);
+  // Every such key types a letter on the Russian layout.
+  for C in ',.;''[]`<>"{}~' do
+    Assert.IsTrue(Ord(ConvertCharSwap(C)) > $0400, C);
+end;
+
+procedure TDetectionTests.DetectsRussianWordsWithLettersOnPunctuationKeys;
+var
+  Flagged, Total: Integer;
+begin
+  CountDetections(RussianKeySample, True, lkEN, Flagged, Total);
+  Assert.IsTrue(Flagged * 100 >= Total * MinKeyLettersDetected, Format('%d of %d', [Flagged, Total]));
+end;
+
+procedure TReadingTests.LetterModelPrefersTextOfItsOwnLanguage;
+begin
+  Assert.IsTrue(LetterModelCost('привет', lkRU) < LetterModelCost('ghbdtn', lkEN));
+  Assert.IsTrue(LetterModelCost('hello', lkEN) < LetterModelCost('руддщ', lkRU));
+  // A key that types a Russian letter is almost never inside an English word.
+  Assert.IsTrue(LetterModelCost('a,b', lkEN) > LetterModelCost('abb', lkEN) + 40);
+  Assert.AreEqual(LetterModelCost('еще', lkRU), LetterModelCost('ещё', lkRU));
+end;
+
+procedure TReadingTests.WordListKnowsFrequentWordsOfEachLanguage;
+begin
+  Assert.IsTrue(WordCost('привет', lkRU) >= 0);
+  Assert.IsTrue(WordCost('hello', lkEN) >= 0);
+  Assert.AreEqual(-1, WordCost('привет', lkEN));
+  Assert.AreEqual(-1, WordCost('ghbdtn', lkEN));
+  Assert.AreEqual(WordCost('еще', lkRU), WordCost('ещё', lkRU));
+  // A more frequent word costs less.
+  Assert.IsTrue(WordCost('и', lkRU) < WordCost('привет', lkRU));
+  Assert.IsTrue(WordCost('the', lkEN) < WordCost('hello', lkEN));
+end;
+
+procedure TReadingTests.ListedWordIsAsCheapAsItsListCost;
+var
+  Reading: TReading;
+begin
+  Reading := ReadAsRussian('привет');
+  Assert.IsTrue(Reading.Valid);
+  Assert.IsTrue(Reading.Listed);
+  Assert.IsTrue(Reading.Cost <= WordCost('привет', lkRU));
+  Reading := ReadAsEnglish('ghbdtn');
+  Assert.IsFalse(Reading.Listed);
+  Assert.AreEqual(LetterModelCost('ghbdtn', lkEN), Reading.Cost);
+end;
+
+procedure TReadingTests.EnglishReadingMayGiveUpEdgeKeysAtAPrice;
+var
+  Plain, Comma, Quoted: TReading;
+begin
+  Plain := ReadAsEnglish('hello');
+  Comma := ReadAsEnglish('hello,');
+  Quoted := ReadAsEnglish('''hello''');
+  Assert.AreEqual('hello', Comma.Core);
+  Assert.IsTrue(Comma.Cost > Plain.Cost);
+  Assert.AreEqual(Plain.PlainCost, Comma.PlainCost);
+  // A comma after a word is more common than a quote around it.
+  Assert.IsTrue(Quoted.Cost > Comma.Cost);
+  Assert.IsFalse(ReadAsEnglish(',.').Valid);
+  Assert.IsFalse(ReadAsEnglish('').Valid);
+end;
+
+procedure TReadingTests.RussianReadingKeepsEveryKey;
+var
+  Reading: TReading;
+begin
+  Reading := ReadAsRussian('было');
+  Assert.AreEqual('было', Reading.Core);
+  Assert.IsTrue(Reading.Cost > 0);
+  Assert.AreEqual(Reading.Cost, Reading.PlainCost);
+end;
+
+procedure TAnalyzerTests.ConvertsWordsWithLettersOnPunctuationKeys;
+
+  procedure AssertConverts(const ATyped, AExpected: string);
+  var
+    Analysis: TAnalysisResult;
+  begin
+    Analysis := AnalyzeWord(ATyped, lkEN);
+    Assert.IsTrue(Analysis.NeedsSwitch, ATyped);
+    Assert.AreEqual(AExpected, Analysis.ConvertedText, ATyped);
+    Assert.AreEqual(Integer(lkRU), Integer(Analysis.TargetLang), ATyped);
+  end;
+
+begin
+  // The word starts with "б", "э", "х", "ё" or a capital typed with Shift.
+  AssertConverts(',sk', 'был');
+  AssertConverts(',tp', 'без');
+  AssertConverts('<sk', 'Был');
+  AssertConverts(',jkmijq', 'большой');
+  AssertConverts('''nj', 'это');
+  AssertConverts('[jhjij', 'хорошо');
+  AssertConverts('`krf', 'ёлка');
+  // The word ends with "ю", or has one inside.
+  AssertConverts('cdj.', 'свою');
+  AssertConverts(';bpym.', 'жизнью');
+  AssertConverts('c.lf', 'сюда');
+  AssertConverts('c,jhrf', 'сборка');
+  AssertConverts('Hf,jxbq', 'Рабочий');
+  // A word of the other layout is found when the layout is not known as well.
+  Assert.IsTrue(AnalyzeWord(',jkmijq', lkUnknown).NeedsSwitch);
+  Assert.AreEqual('большой', AnalyzeWord(',jkmijq', lkUnknown).ConvertedText);
+end;
+
+procedure TAnalyzerTests.KeepsEnglishWordsWithPunctuationAroundThem;
+var
+  Typed: string;
+begin
+  for Typed in ['hello,', 'world.', 'ok.', 'yes,', 'No.', 'it''s', 'I''m',
+    'don''t', 'can''t', '''quoted''', '[test]', '<div>', 'e.g.'] do
+    Assert.IsFalse(AnalyzeWord(Typed, lkEN).NeedsSwitch, Typed);
+  // The same words typed on the Russian layout come back with their marks.
+  Assert.AreEqual('hello,', AnalyzeWord(ConvertStringSwap('hello,'), lkRU).ConvertedText);
+  Assert.AreEqual('world.', AnalyzeWord(ConvertStringSwap('world.'), lkRU).ConvertedText);
+end;
+
+procedure TAnalyzerTests.KeepsTokensThatReadAsNoWord;
+var
+  Typed: string;
+begin
+  // Letters joined by commas, periods or angle brackets are code, an
+  // address or an abbreviation, not a Russian word typed on the wrong layout.
+  for Typed in ['x.y.z', 'a,b,c', 'a.k.a', 'e<f', 'k.o', 'example.com',
+    'readme.md', 'github.com', 'x,y', 'main.cpp', 'www.site.ru'] do
+    Assert.IsFalse(AnalyzeWord(Typed, lkEN).NeedsSwitch, Typed);
+end;
+
+procedure TAnalyzerTests.ConvertsRussianAbbreviationOfTheWordList;
+begin
+  // A word without vowels is skipped unless it is a listed Russian word.
+  Assert.IsTrue(AnalyzeWord('cyu', lkEN).NeedsSwitch);
+  Assert.AreEqual('снг', AnalyzeWord('cyu', lkEN).ConvertedText);
+  Assert.IsFalse(AnalyzeWord('dvd', lkEN).NeedsSwitch);
+  Assert.IsFalse(AnalyzeWord('pdf', lkEN).NeedsSwitch);
+  Assert.IsFalse(AnalyzeWord('зав', lkRU).NeedsSwitch);
 end;
 
 procedure TAnalyzerTests.DetectsRussianWordTypedWithEnglishLayout;
@@ -645,14 +838,14 @@ var
   Analysis: TAnalysisResult;
   Phrase: TPhraseContext;
 begin
-  Analysis := AnalyzeWord('buhs', lkEN);
+  Analysis := AnalyzeWord('celf', lkEN);
   Assert.IsFalse(Analysis.NeedsSwitch);
   Phrase := PhraseOf([lkRU, lkRU]);
-  Analysis := AnalyzeWord('buhs', lkEN, hmBalanced, nil, nil, Phrase);
+  Analysis := AnalyzeWord('celf', lkEN, hmBalanced, nil, nil, Phrase);
   Assert.IsTrue(Analysis.NeedsSwitch);
-  Assert.AreEqual('игры', Analysis.ConvertedText);
+  Assert.AreEqual('суда', Analysis.ConvertedText);
   Phrase := PhraseOf([lkRU, lkRU, lkRU]);
-  Analysis := AnalyzeWord('buhs', lkEN, hmCautious, nil, nil, Phrase);
+  Analysis := AnalyzeWord('celf', lkEN, hmCautious, nil, nil, Phrase);
   Assert.IsFalse(Analysis.NeedsSwitch);
 end;
 
@@ -660,10 +853,10 @@ procedure TAnalyzerTests.EnglishContextKeepsABorderlineWord;
 var
   Analysis: TAnalysisResult;
 begin
-  Analysis := AnalyzeWord('vjuen', lkEN);
+  Analysis := AnalyzeWord('pderf', lkEN);
   Assert.IsTrue(Analysis.NeedsSwitch);
-  Assert.AreEqual('могут', Analysis.ConvertedText);
-  Analysis := AnalyzeWord('vjuen', lkEN, hmBalanced, nil, nil, PhraseOf([lkEN, lkEN]));
+  Assert.AreEqual('звука', Analysis.ConvertedText);
+  Analysis := AnalyzeWord('pderf', lkEN, hmBalanced, nil, nil, PhraseOf([lkEN, lkEN]));
   Assert.IsFalse(Analysis.NeedsSwitch);
 end;
 
@@ -789,6 +982,35 @@ begin
     ConvertManualSelection('Привет ghbdtn', hmBalanced, nil, nil));
   Assert.AreEqual('Привет hello',
     ConvertManualSelection('Привет hello', hmBalanced, nil, nil));
+end;
+
+procedure TAnalyzerTests.ManualConversionIsBolderThanAutomatic;
+var
+  Typed, Flipped: string;
+begin
+  // Every word of a block is judged by itself.
+  Typed := 'ghbdtn ltkf';
+  Flipped := ConvertManualSelection(Typed, hmCautious, nil, nil);
+  Assert.AreEqual('привет дела', Flipped);
+  Assert.AreEqual('Привет hello мир',
+    ConvertManualSelection('Ghbdtn hello vbh', hmBalanced, nil, nil));
+  Assert.AreEqual('привет hello world',
+    ConvertManualSelection('ghbdtn hello world', hmBalanced, nil, nil));
+  // Text that already reads well in its layout is not touched.
+  Assert.AreEqual('hello world', ConvertManualSelection('hello world',
+    hmBalanced, nil, nil));
+  Assert.AreEqual('привет мир', ConvertManualSelection('привет мир',
+    hmBalanced, nil, nil));
+  // Short Russian function words are flipped without a Russian word before.
+  Assert.AreEqual('в доме', ConvertManualSelection('d ljvt', hmBalanced, nil, nil));
+  // A single word is flipped even when it reads well as it is.
+  Assert.AreEqual('руддщ', ConvertManualSelection('hello', hmBalanced, nil, nil));
+  // The words the user taught the program to leave are left.
+  Assert.AreEqual('ghbdtn мир', ConvertManualSelection('ghbdtn vbh', hmBalanced,
+    function(const AWord: string): Boolean
+    begin
+      Result := AWord = 'ghbdtn';
+    end, nil));
 end;
 
 procedure TAnalyzerTests.WordAtCaretReadsTheWordUnderTheCaret;
@@ -1933,7 +2155,7 @@ begin
     Assert.IsTrue(Text.Contains('reason=score'));
     Assert.IsTrue(Text.Contains('switch=1'));
     Assert.IsTrue(Text.Contains('target=RU'));
-    Assert.IsTrue(Text.Contains('RU_total='));
+    Assert.IsTrue(Text.Contains('RU_cost='));
     Assert.IsTrue(Text.Contains('reason=protected'));
     Assert.IsTrue(Text.Contains('word="user_name"'));
   finally
@@ -2060,16 +2282,6 @@ begin
   Assert.IsFalse(IsUsableExternalTarget(100, 42, 'Shell_TrayWnd'));
   Assert.IsFalse(IsUsableExternalTarget(100, 42, 'WorkerW'));
   Assert.IsTrue(IsUsableExternalTarget(100, 42, 'CabinetWClass'));
-end;
-
-procedure THookHelperTests.RussianLettersOnPunctuationKeysStayInTheWord;
-begin
-  Assert.IsTrue(IsRussianLetterOnPunctuationKey('б'));
-  Assert.IsTrue(IsRussianLetterOnPunctuationKey('Ю'));
-  Assert.IsTrue(IsRussianLetterOnPunctuationKey('ё'));
-  Assert.IsFalse(IsRussianLetterOnPunctuationKey(','));
-  Assert.IsFalse(IsRussianLetterOnPunctuationKey('.'));
-  Assert.IsFalse(IsRussianLetterOnPunctuationKey('-'));
 end;
 
 procedure THookHelperTests.ColonAfterOneLetterDoesNotSwitch;
@@ -2219,7 +2431,7 @@ var
   Phrase: TPhraseContext;
 begin
   Phrase := PhraseOf([lkRU, lkEN, lkRU]);
-  Assert.AreEqual(2, PhraseScoreBias(Phrase, lkRU));
+  Assert.AreEqual(2 * PhraseBiasUnit, PhraseScoreBias(Phrase, lkRU));
   Assert.AreEqual(0, PhraseScoreBias(Phrase, lkEN));
 end;
 
@@ -2228,7 +2440,7 @@ var
   Phrase: TPhraseContext;
 begin
   Phrase := PhraseOf([lkEN, lkEN, lkEN]);
-  Assert.AreEqual(3, PhraseScoreBias(Phrase, lkEN));
+  Assert.AreEqual(PhraseBiasCap, PhraseScoreBias(Phrase, lkEN));
   Assert.AreEqual(0, PhraseScoreBias(Phrase, lkRU));
   Phrase := PhraseOf([lkEN, lkEN, lkEN, lkEN, lkEN]);
   Assert.AreEqual(PhraseBiasCap, PhraseScoreBias(Phrase, lkEN));
@@ -2517,6 +2729,7 @@ initialization
   TDUnitX.RegisterTestFixture(TUpdateTests);
   TDUnitX.RegisterTestFixture(TAnalyzerTests);
   TDUnitX.RegisterTestFixture(TDetectionTests);
+  TDUnitX.RegisterTestFixture(TReadingTests);
   TDUnitX.RegisterTestFixture(TInputBufferTests);
   TDUnitX.RegisterTestFixture(TLeftShiftStateTests);
   TDUnitX.RegisterTestFixture(TSettingsTests);

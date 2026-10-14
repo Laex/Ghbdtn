@@ -1459,11 +1459,12 @@ end;
 
 function IsPunctuationKey(AVirtualKey: DWORD): Boolean;
 begin
-  // ; ' [ ] are Russian letters, so they stay inside the word:
-  // nfr;t -> также, ' -> э, [ -> х, ] -> ъ.
+  // The keys of ; ' [ ] , . ` are Russian letters (ж э х ъ б ю ё), so they
+  // stay inside the word whatever the layout: nfr;t -> также, ,sk -> был,
+  // vj. -> мою. Whether such a key is punctuation of an English word or a
+  // letter of a Russian one is decided when the word ends.
   // Minus and plus are included: "-" and "+" end a word, "_" and "=" do not.
-  Result := AVirtualKey in [VK_OEM_PLUS, VK_OEM_COMMA, VK_OEM_MINUS,
-    VK_OEM_PERIOD, VK_OEM_2, VK_OEM_3, VK_OEM_5];
+  Result := AVirtualKey in [VK_OEM_PLUS, VK_OEM_MINUS, VK_OEM_2, VK_OEM_5];
 end;
 
 function ShiftedDigitPunctuation(AVirtualKey: DWORD; ALang: TLangKind): Char;
@@ -1495,8 +1496,6 @@ begin
   if IsPunctuationKey(AVirtualKey) then
   begin
     Ch := MapVirtualKeyToChar(AVirtualKey, AShifted, ALang);
-    if (ALang = lkRU) and IsRussianLetterOnPunctuationKey(Ch) then
-      Exit;
     // user_name and a=b stay one word. "-" and "+" end it.
     if (Ch = '_') or (Ch = '=') then
       Exit;
@@ -1551,15 +1550,6 @@ begin
     end;
     Exit;
   end;
-  // A kept "," or "." ended the word that was already analyzed. Nothing is
-  // typed after it, so there is no new word to check.
-  if CharInSet(FInputBuffer.BufferText[Length(FInputBuffer.BufferText)],
-    [',', '.']) then
-  begin
-    FInputBuffer.Clear;
-    FBackspaceRun := 0;
-    Exit;
-  end;
   if ColonEndsASingleLetter(FInputBuffer.BufferText, APunctuation) then
   begin
     FInputBuffer.Clear;
@@ -1609,14 +1599,9 @@ begin
       end;
       if APunctuation <> #0 then
       begin
-        // In the English layout "," and "." are the Russian letters "б" and "ю".
-        // When the word is converted to Russian they belong to the word.
-        if (Analysis.TargetLang = lkRU) and
-           CharInSet(APunctuation, [',', '.']) then
-          Item.NewText := Item.NewText + ConvertCharSwap(APunctuation)
         // "?" and "/" on the English layout are the Russian "," and ".".
-        else if (Analysis.TargetLang = lkRU) and (ALang = lkEN) and
-                CharInSet(APunctuation, ['?', '/']) then
+        if (Analysis.TargetLang = lkRU) and (ALang = lkEN) and
+           CharInSet(APunctuation, ['?', '/']) then
           Item.NewText := Item.NewText + ConvertCharSwap(APunctuation)
         else
           Item.NewText := Item.NewText + APunctuation;
@@ -1626,16 +1611,8 @@ begin
         Item.TrailingKey := Word(VKCode);
       Item.TargetLang := Analysis.TargetLang;
       Item.PlaySwitchSound := Profile.SoundOnSwitch;
-      if (Analysis.TargetLang = lkRU) and CharInSet(APunctuation, [',', '.']) then
-      begin
-        FLastConvertedText := Item.NewText;
-        FLastConvertedLen := Length(Item.NewText);
-      end
-      else
-      begin
-        FLastConvertedText := Analysis.ConvertedText;
-        FLastConvertedLen := Length(Analysis.ConvertedText);
-      end;
+      FLastConvertedText := Analysis.ConvertedText;
+      FLastConvertedLen := Length(Analysis.ConvertedText);
       LineReplaceTail(Length(MarkerText), Analysis.ConvertedText);
       FLastConversionTick := GetTickCount64;
       FLastTypedWord := MarkerText;
@@ -1651,7 +1628,7 @@ begin
       RememberCommittedWord(ALang, MarkerText);
       if (APunctuation = '?') and IsEnglishQuestionMarker(MarkerText + '?') then
         FAwaitQuestionSpace := True;
-      if ((ALang <> lkEN) or not CharInSet(APunctuation, [',', '.', '?', '/'])) and
+      if ((ALang <> lkEN) or not CharInSet(APunctuation, ['?', '/'])) and
          TryQueueCaseFix(MarkerText, APunctuation, VKCode, QuestionArmed) then
         Result := True;
     end;
@@ -1660,16 +1637,6 @@ begin
   begin
     SettlePendingPhrase(True);
     RememberCommittedWord(ALang, FInputBuffer.BufferText);
-  end;
-  // In the English layout "," and "." are the Russian letters "b" and "yu".
-  // A kept word stays in the buffer with the mark, so letters typed right after
-  // it (Hf,jxbq) are analyzed together as one word.
-  if (not Result) and (ALang = lkEN) and (APunctuation <> #0) and
-     CharInSet(APunctuation, [',', '.']) then
-  begin
-    FInputBuffer.AddChar(APunctuation, ALang);
-    FBackspaceRun := 0;
-    Exit;
   end;
   FInputBuffer.Clear;
   FBackspaceRun := 0;

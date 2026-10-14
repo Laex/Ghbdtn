@@ -58,6 +58,8 @@
     <DCCReference Include="Ghbdtn.Tests.Core.pas"/>
     <DCCReference Include="..\src\Ghbdtn.Layout.pas"/>
     <DCCReference Include="..\src\Ghbdtn.LetterModel.pas"/>
+    <DCCReference Include="..\src\Ghbdtn.WordFreq.pas"/>
+    <DCCReference Include="..\src\Ghbdtn.Reading.pas"/>
     <DCCReference Include="..\src\Ghbdtn.Heuristics.pas"/>
     <DCCReference Include="..\src\Ghbdtn.Analyzer.pas"/>
     <DCCReference Include="..\src\Ghbdtn.Buffer.pas"/>

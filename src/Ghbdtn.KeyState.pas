@@ -24,7 +24,6 @@ function IsWithinLearningWindow(AConversionTick, ACurrentTick,
   AWindowMs: UInt64): Boolean;
 { Whole minutes left on a timed pause, rounded up; 0 once AUntil has passed. }
 function PauseMinutesLeft(AUntil, ANow: UInt64): Integer;
-function IsRussianLetterOnPunctuationKey(AChar: Char): Boolean;
 function ColonEndsASingleLetter(const AWord: string; APunctuation: Char): Boolean;
 function IsUsableExternalTarget(AWindowProcessId, AOwnProcessId: DWORD;
   const AWindowClass: string): Boolean;
@@ -107,14 +106,6 @@ begin
   Result := (AConversionTick <> 0) and
     (ACurrentTick >= AConversionTick) and
     (ACurrentTick - AConversionTick <= AWindowMs);
-end;
-
-function IsRussianLetterOnPunctuationKey(AChar: Char): Boolean;
-begin
-  // On the Russian layout the keys of , . and ` type the letters b, yu and yo.
-  // They are part of a word there, not delimiters.
-  Result := (AChar = 'б') or (AChar = 'ю') or (AChar = 'ё') or
-    (AChar = 'Б') or (AChar = 'Ю') or (AChar = 'Ё');
 end;
 
 function ColonEndsASingleLetter(const AWord: string; APunctuation: Char): Boolean;

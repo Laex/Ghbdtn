@@ -8,61 +8,28 @@ implementation
 
 uses
   Winapi.Windows,
+  Winapi.ShellAPI,
+  Winapi.Messages,
   System.SysUtils,
   System.Classes,
+  System.Math,
   System.IOUtils,
+  System.UITypes,
   System.Generics.Collections,
+  Vcl.Graphics,
   Vcl.Forms,
   Vcl.Controls,
   Vcl.StdCtrls,
   Vcl.ExtCtrls,
+  Vcl.Dialogs,
+  Winapi.GDIPAPI,
+  Winapi.GDIPOBJ,
   Ghbdtn.Analyzer,
   Ghbdtn.Diagnostics,
   Ghbdtn.Learning,
   Ghbdtn.Settings,
   Ghbdtn.AutoStart,
   Ghbdtn.Hook;
-
-type
-  TfrmSettings = class(TForm)
-  private
-    FAutoSwitch: TCheckBox;
-    FSoundRU: TCheckBox;
-    FSoundSwitch: TCheckBox;
-    FDoubleShift: TCheckBox;
-    FSelectionLayout: TCheckBox;
-    FAutoStart: TCheckBox;
-    FFixCaps: TCheckBox;
-    FFixCapsLock: TCheckBox;
-    FPauseFullscreen: TCheckBox;
-    FEnglishSecure: TCheckBox;
-    FDoubleCtrl: TCheckBox;
-    FHintFlash: TCheckBox;
-    FHintAnimate: TCheckBox;
-    FMode: TRadioGroup;
-    FHintMode: TRadioGroup;
-    FDiagnostics: TRadioGroup;
-    procedure LoadValues;
-    procedure ApplyValues;
-    procedure ResetLearningClick(Sender: TObject);
-    procedure LearningListClick(Sender: TObject);
-    procedure ExclusionsClick(Sender: TObject);
-    procedure RulesClick(Sender: TObject);
-    procedure ResetDiagnosticsClick(Sender: TObject);
-  public
-    constructor Create(AOwner: TComponent); override;
-  end;
-
-function MakeCheck(AOwner: TWinControl; const ACaption: string;
-  ALeft, ATop, AWidth: Integer): TCheckBox;
-begin
-  Result := TCheckBox.Create(AOwner);
-  Result.Parent := AOwner;
-  Result.Caption := ACaption;
-  Result.Left := ALeft;
-  Result.Top := ATop;
-  Result.Width := AWidth;
-end;
 
 type
   TLearningRow = class
@@ -599,190 +566,567 @@ begin
   end;
 end;
 
-procedure FitCaption(AForm: TForm; AButton: TButton; AMinWidth: Integer);
+type
+  // A flat on/off switch drawn with GDI+: a filled accent track with a white
+  // thumb when on, an outlined track with a dark thumb when off.
+  TSwitch = class(TCustomControl)
+  private
+    FOn: Boolean;
+    FHot: Boolean;
+    procedure SetOn(AValue: Boolean);
+    procedure CMMouseEnter(var Message: TMessage); message CM_MOUSEENTER;
+    procedure CMMouseLeave(var Message: TMessage); message CM_MOUSELEAVE;
+    procedure CMEnabledChanged(var Message: TMessage); message CM_ENABLEDCHANGED;
+    procedure WMSetFocus(var Message: TWMSetFocus); message WM_SETFOCUS;
+    procedure WMKillFocus(var Message: TWMKillFocus); message WM_KILLFOCUS;
+    procedure WMGetDlgCode(var Message: TWMGetDlgCode); message WM_GETDLGCODE;
+  protected
+    procedure Paint; override;
+    procedure Click; override;
+    procedure KeyDown(var Key: Word; Shift: TShiftState); override;
+    procedure MouseDown(Button: TMouseButton; Shift: TShiftState; X, Y: Integer); override;
+  public
+    constructor Create(AOwner: TComponent); override;
+    property Checked: Boolean read FOn write SetOn;
+  end;
+
+constructor TSwitch.Create(AOwner: TComponent);
 begin
-  AButton.Width := AForm.Canvas.TextWidth(AButton.Caption) + 36;
-  if AButton.Width < AMinWidth then
-    AButton.Width := AMinWidth;
+  inherited Create(AOwner);
+  ControlStyle := ControlStyle - [csOpaque] + [csSetCaption];
+  TabStop := True;
+  Cursor := crHandPoint;
+  DoubleBuffered := True;
+  Width := 46;
+  Height := 24;
+end;
+
+procedure TSwitch.SetOn(AValue: Boolean);
+begin
+  if FOn = AValue then
+    Exit;
+  FOn := AValue;
+  Invalidate;
+end;
+
+procedure TSwitch.Click;
+begin
+  if Enabled then
+    SetOn(not FOn);
+  inherited Click;
+end;
+
+procedure TSwitch.MouseDown(Button: TMouseButton; Shift: TShiftState; X, Y: Integer);
+begin
+  if CanFocus then
+    SetFocus;
+  inherited MouseDown(Button, Shift, X, Y);
+end;
+
+procedure TSwitch.KeyDown(var Key: Word; Shift: TShiftState);
+begin
+  if Key = VK_SPACE then
+  begin
+    Click;
+    Key := 0;
+  end;
+  inherited KeyDown(Key, Shift);
+end;
+
+procedure TSwitch.CMMouseEnter(var Message: TMessage);
+begin
+  FHot := True;
+  Invalidate;
+end;
+
+procedure TSwitch.CMMouseLeave(var Message: TMessage);
+begin
+  FHot := False;
+  Invalidate;
+end;
+
+procedure TSwitch.CMEnabledChanged(var Message: TMessage);
+begin
+  inherited;
+  Invalidate;
+end;
+
+procedure TSwitch.WMSetFocus(var Message: TWMSetFocus);
+begin
+  inherited;
+  Invalidate;
+end;
+
+procedure TSwitch.WMKillFocus(var Message: TWMKillFocus);
+begin
+  inherited;
+  Invalidate;
+end;
+
+procedure TSwitch.WMGetDlgCode(var Message: TWMGetDlgCode);
+begin
+  Message.Result := DLGC_WANTARROWS;
+end;
+
+procedure TSwitch.Paint;
+var
+  G: TGPGraphics;
+  Fill, Thumb: TGPSolidBrush;
+  Pen: TGPPen;
+  Path: TGPGraphicsPath;
+  TrackW, TrackH, ThumbD, ThumbX, Pad: Single;
+  Accent, Ink: Cardinal;
+
+  procedure RoundTrack(X, Y, W, H: Single);
+  begin
+    Path.Reset;
+    Path.AddArc(X, Y, H, H, 90, 180);
+    Path.AddArc(X + W - H, Y, H, H, 270, 180);
+    Path.CloseFigure;
+  end;
+
+begin
+  Canvas.Brush.Color := Color;
+  Canvas.FillRect(ClientRect);
+  G := TGPGraphics.Create(Canvas.Handle);
+  Path := TGPGraphicsPath.Create;
+  try
+    G.SetSmoothingMode(SmoothingModeAntiAlias);
+    TrackW := Width - 3;
+    TrackH := Height - 4;
+    Pad := 1.5;
+    Accent := MakeColor(255, 0, 103, 192);
+    Ink := MakeColor(255, 90, 90, 90);
+    if not Enabled then
+    begin
+      Accent := MakeColor(255, 160, 160, 160);
+      Ink := MakeColor(255, 170, 170, 170);
+    end
+    else if FHot and not FOn then
+      Ink := MakeColor(255, 32, 32, 32);
+    RoundTrack(Pad, 2, TrackW, TrackH);
+    if FOn then
+    begin
+      Fill := TGPSolidBrush.Create(Accent);
+      try
+        G.FillPath(Fill, Path);
+      finally
+        Fill.Free;
+      end;
+      ThumbD := TrackH - 8;
+      ThumbX := Pad + TrackW - TrackH + 4;
+      Thumb := TGPSolidBrush.Create(MakeColor(255, 255, 255, 255));
+    end
+    else
+    begin
+      Pen := TGPPen.Create(Ink, 1.5);
+      try
+        G.DrawPath(Pen, Path);
+      finally
+        Pen.Free;
+      end;
+      ThumbD := TrackH - 11;
+      ThumbX := Pad + 5.5;
+      Thumb := TGPSolidBrush.Create(Ink);
+    end;
+    try
+      G.FillEllipse(Thumb, ThumbX, 2 + (TrackH - ThumbD) / 2, ThumbD, ThumbD);
+    finally
+      Thumb.Free;
+    end;
+    if Focused then
+    begin
+      Pen := TGPPen.Create(MakeColor(255, 0, 0, 0), 1);
+      try
+        Pen.SetDashStyle(DashStyleDot);
+        G.DrawRectangle(Pen, 0.5, 0.5, Width - 2, Height - 2);
+      finally
+        Pen.Free;
+      end;
+    end;
+  finally
+    Path.Free;
+    G.Free;
+  end;
+end;
+
+const
+  // Layout values are in pixels at 96 DPI and scaled by the form.
+  PageMargin = 24;
+  RowHeight = 36;
+  SectionGap = 14;
+  SectionHeight = 30;
+  ComboWidth = 190;
+  SwitchBoxWidth = 46;
+  ButtonBarHeight = 56;
+
+type
+  TfrmSettings = class(TForm)
+  private
+    FDpi: Integer;
+    FScroll: TScrollBox;
+    FMainPanel: TPanel;
+    FAdvancedPanel: TPanel;
+    FSpoiler: TLabel;
+    FBar: TPanel;
+    FApplyButton: TButton;
+    FAutoSwitch: TSwitch;
+    FSoundRU: TSwitch;
+    FSoundSwitch: TSwitch;
+    FDoubleShift: TSwitch;
+    FSelectionLayout: TSwitch;
+    FAutoStart: TSwitch;
+    FFixCaps: TSwitch;
+    FFixCapsLock: TSwitch;
+    FPauseFullscreen: TSwitch;
+    FEnglishSecure: TSwitch;
+    FDoubleCtrl: TSwitch;
+    FHintFlash: TSwitch;
+    FHintAnimate: TSwitch;
+    FMode: TComboBox;
+    FHintMode: TComboBox;
+    FDiagnostics: TComboBox;
+    FAdvancedShown: Boolean;
+    function S(AValue: Integer): Integer;
+    function AddSection(AParent: TWinControl; var AY: Integer;
+      const ATitle: string): TLabel;
+    function AddToggle(AParent: TWinControl; var AY: Integer;
+      const ACaption: string): TSwitch;
+    function AddCombo(AParent: TWinControl; var AY: Integer;
+      const ACaption: string; const AItems: array of string): TComboBox;
+    function AddButton(AParent: TWinControl; const ACaption: string;
+      ALeft, ATop: Integer; AOnClick: TNotifyEvent): TButton;
+    procedure BuildMain(var AY: Integer);
+    procedure BuildAdvanced(var AY: Integer);
+    procedure FitHeight;
+    procedure SpoilerClick(Sender: TObject);
+    procedure WheelScroll(Sender: TObject; Shift: TShiftState;
+      WheelDelta: Integer; MousePos: TPoint; var Handled: Boolean);
+    procedure ApplyClick(Sender: TObject);
+    procedure OkClick(Sender: TObject);
+    procedure LoadValues;
+    procedure ApplyValues;
+    procedure ResetLearningClick(Sender: TObject);
+    procedure LearningListClick(Sender: TObject);
+    procedure ExclusionsClick(Sender: TObject);
+    procedure RulesClick(Sender: TObject);
+    procedure ResetDiagnosticsClick(Sender: TObject);
+    procedure OpenLogClick(Sender: TObject);
+    procedure OpenConfigClick(Sender: TObject);
+  public
+    constructor Create(AOwner: TComponent); override;
+  end;
+
+function DiagnosticsLogPath: string;
+begin
+  Result := TPath.Combine(ExtractFilePath(ParamStr(0)), 'diagnostics.log');
+end;
+
+function TfrmSettings.S(AValue: Integer): Integer;
+begin
+  Result := MulDiv(AValue, FDpi, 96);
+end;
+
+function TfrmSettings.AddSection(AParent: TWinControl; var AY: Integer;
+  const ATitle: string): TLabel;
+begin
+  Inc(AY, S(SectionGap));
+  Result := TLabel.Create(Self);
+  Result.Parent := AParent;
+  Result.Caption := ATitle;
+  Result.Font.Style := [fsBold];
+  Result.Font.Size := 10;
+  Result.Font.Color := TColor($9E5A00);
+  Result.Left := S(PageMargin);
+  Result.Top := AY;
+  Inc(AY, S(SectionHeight));
+end;
+
+function TfrmSettings.AddToggle(AParent: TWinControl; var AY: Integer;
+  const ACaption: string): TSwitch;
+var
+  Caption: TLabel;
+begin
+  Result := TSwitch.Create(Self);
+  Result.Parent := AParent;
+  Result.SetBounds(AParent.ClientWidth - S(PageMargin) - S(SwitchBoxWidth),
+    AY + (S(RowHeight) - S(24)) div 2, S(SwitchBoxWidth), S(24));
+  Result.Anchors := [akTop, akRight];
+  Caption := TLabel.Create(Self);
+  Caption.Parent := AParent;
+  Caption.Caption := ACaption;
+  Caption.AutoSize := False;
+  Caption.WordWrap := True;
+  Caption.Layout := tlCenter;
+  Caption.SetBounds(S(PageMargin), AY,
+    Result.Left - S(PageMargin) - S(12), S(RowHeight));
+  Caption.Anchors := [akLeft, akTop, akRight];
+  Caption.FocusControl := Result;
+  Inc(AY, S(RowHeight));
+end;
+
+function TfrmSettings.AddCombo(AParent: TWinControl; var AY: Integer;
+  const ACaption: string; const AItems: array of string): TComboBox;
+var
+  Caption: TLabel;
+  Item: string;
+begin
+  Result := TComboBox.Create(Self);
+  Result.Parent := AParent;
+  Result.Style := csDropDownList;
+  for Item in AItems do
+    Result.Items.Add(Item);
+  Result.SetBounds(AParent.ClientWidth - S(PageMargin) - S(ComboWidth),
+    AY + (S(RowHeight) - Result.Height) div 2, S(ComboWidth), Result.Height);
+  Result.Anchors := [akTop, akRight];
+  Caption := TLabel.Create(Self);
+  Caption.Parent := AParent;
+  Caption.Caption := ACaption;
+  Caption.AutoSize := False;
+  Caption.Layout := tlCenter;
+  Caption.SetBounds(S(PageMargin), AY,
+    Result.Left - S(PageMargin) - S(12), S(RowHeight));
+  Caption.Anchors := [akLeft, akTop, akRight];
+  Caption.FocusControl := Result;
+  Inc(AY, S(RowHeight));
+end;
+
+function TfrmSettings.AddButton(AParent: TWinControl; const ACaption: string;
+  ALeft, ATop: Integer; AOnClick: TNotifyEvent): TButton;
+begin
+  Result := TButton.Create(Self);
+  Result.Parent := AParent;
+  Result.Caption := ACaption;
+  Result.OnClick := AOnClick;
+  Result.Height := S(30);
+  Result.Width := Max(S(96), Canvas.TextWidth(ACaption) + S(32));
+  Result.Left := ALeft;
+  Result.Top := ATop;
+end;
+
+procedure TfrmSettings.BuildMain(var AY: Integer);
+begin
+  AddSection(FMainPanel, AY, 'Основное');
+  FAutoSwitch := AddToggle(FMainPanel, AY, 'Исправлять раскладку автоматически');
+  FMode := AddCombo(FMainPanel, AY, 'Уверенность исправления',
+    ['Осторожно', 'Сбалансированно', 'Агрессивно']);
+  FAutoStart := AddToggle(FMainPanel, AY, 'Запускать вместе с Windows');
+
+  AddSection(FMainPanel, AY, 'Исправления при наборе');
+  FFixCaps := AddToggle(FMainPanel, AY,
+    'Две заглавные в начале слова (ТОлько -> Только)');
+  FFixCapsLock := AddToggle(FMainPanel, AY,
+    'Слово с нажатым Caps Lock (пРИВЕТ -> Привет)');
+  FEnglishSecure := AddToggle(FMainPanel, AY,
+    'Английская раскладка в полях пароля и e-mail');
+
+  AddSection(FMainPanel, AY, 'Жесты');
+  FDoubleShift := AddToggle(FMainPanel, AY,
+    'Двойной Left Shift: конвертировать слово или выделение');
+  FDoubleCtrl := AddToggle(FMainPanel, AY,
+    'Двойной Ctrl: конвертировать набранную строку');
+
+  AddSection(FMainPanel, AY, 'Звук и подсказки');
+  FSoundSwitch := AddToggle(FMainPanel, AY, 'Звук при переключении');
+  FHintMode := AddCombo(FMainPanel, AY, 'Подсказка у каретки',
+    ['На время', 'Следует за кареткой', 'Не показывать']);
+end;
+
+procedure TfrmSettings.BuildAdvanced(var AY: Integer);
+var
+  X: Integer;
+  First, Second: TButton;
+begin
+  AddSection(FAdvancedPanel, AY, 'Поведение');
+  FSoundRU := AddToggle(FAdvancedPanel, AY, 'Звук при вводе в русской раскладке');
+  FSelectionLayout := AddToggle(FAdvancedPanel, AY,
+    'Менять раскладку после конвертации выделения');
+  FPauseFullscreen := AddToggle(FAdvancedPanel, AY,
+    'Не вмешиваться в полноэкранных приложениях');
+  FHintFlash := AddToggle(FAdvancedPanel, AY, 'Вспышка подсказки при появлении');
+  FHintAnimate := AddToggle(FAdvancedPanel, AY, 'Анимация размера подсказки');
+
+  AddSection(FAdvancedPanel, AY, 'Слова и приложения');
+  X := S(PageMargin);
+  First := AddButton(FAdvancedPanel, 'Список обучения', X, AY, LearningListClick);
+  Second := AddButton(FAdvancedPanel, 'Исключения', First.BoundsRect.Right + S(8),
+    AY, ExclusionsClick);
+  AddButton(FAdvancedPanel, 'Правила приложений', Second.BoundsRect.Right + S(8),
+    AY, RulesClick);
+  Inc(AY, S(38));
+  AddButton(FAdvancedPanel, 'Сбросить обучение', X, AY, ResetLearningClick);
+  Inc(AY, S(38));
+
+  AddSection(FAdvancedPanel, AY, 'Диагностика');
+  FDiagnostics := AddCombo(FAdvancedPanel, AY, 'Журнал',
+    ['Выключен', 'Ошибки', 'Информация', 'Подробно']);
+  First := AddButton(FAdvancedPanel, 'Открыть журнал', X, AY, OpenLogClick);
+  AddButton(FAdvancedPanel, 'Очистить журнал', First.BoundsRect.Right + S(8),
+    AY, ResetDiagnosticsClick);
+  Inc(AY, S(38));
+  AddButton(FAdvancedPanel, 'Открыть config.json', X, AY, OpenConfigClick);
+  Inc(AY, S(44));
 end;
 
 constructor TfrmSettings.Create(AOwner: TComponent);
 var
-  OkButton, CancelButton, ResetLearning, LearningList, ResetDiagnostics,
-    ExclusionsButton, RulesButton: TButton;
-  Need, ButtonTop, RowWidth: Integer;
+  Y, W: Integer;
+  OkButton, CancelButton: TButton;
 begin
   inherited CreateNew(AOwner);
-  Caption := 'Настройки';
-  BorderStyle := bsDialog;
+  FDpi := GetDpiForSystem;
+  if FDpi < 96 then
+    FDpi := 96;
+  Caption := 'Настройки Ghbdtn';
+  BorderStyle := bsSingle;
+  BorderIcons := [biSystemMenu];
   Position := poScreenCenter;
-  ClientWidth := 460;
-  ClientHeight := 712;
   Font.Name := 'Segoe UI';
-  Font.Height := -12;
+  Font.Size := 9;
+  Color := clWindow;
+  ClientWidth := S(500);
+  ClientHeight := S(400);
+  OnMouseWheel := WheelScroll;
+  KeyPreview := True;
 
-  FAutoSwitch := MakeCheck(Self, 'Автопереключение', 16, 16, 420);
-  FSoundRU := MakeCheck(Self, 'Звук при вводе в RU', 16, 40, 420);
-  FSoundSwitch := MakeCheck(Self, 'Звук при переключении', 16, 64, 420);
-  FDoubleShift := MakeCheck(Self, 'Двойной Left Shift', 16, 88, 420);
-  FSelectionLayout := MakeCheck(Self,
-    'Менять раскладку после конвертации выделения', 16, 112, 420);
-  FAutoStart := MakeCheck(Self, 'Автозапуск', 16, 136, 420);
-  FFixCaps := MakeCheck(Self,
-    'Исправлять две заглавные в начале слова (ТОлько -> Только)', 16, 160, 420);
-  FFixCapsLock := MakeCheck(Self,
-    'Исправлять слово, набранное с Caps Lock (пРИВЕТ -> Привет)', 16, 184, 420);
-  FPauseFullscreen := MakeCheck(Self,
-    'Не вмешиваться в полноэкранных приложениях', 16, 208, 420);
-  FEnglishSecure := MakeCheck(Self,
-    'Английская раскладка в полях пароля и e-mail', 16, 232, 420);
-  FDoubleCtrl := MakeCheck(Self,
-    'Двойной Ctrl: конвертировать набранную строку', 16, 256, 420);
+  FBar := TPanel.Create(Self);
+  FBar.Parent := Self;
+  FBar.Align := alBottom;
+  FBar.Height := S(ButtonBarHeight);
+  FBar.BevelOuter := bvNone;
+  FBar.ParentBackground := False;
+  FBar.Color := clBtnFace;
 
-  FMode := TRadioGroup.Create(Self);
-  FMode.Parent := Self;
-  FMode.Caption := 'Эвристика';
-  FMode.Left := 16;
-  FMode.Top := 288;
-  FMode.Width := 428;
-  FMode.Height := 78;
-  FMode.Items.Add('Осторожный');
-  FMode.Items.Add('Сбалансированный');
-  FMode.Items.Add('Агрессивный');
+  FScroll := TScrollBox.Create(Self);
+  FScroll.Parent := Self;
+  FScroll.Align := alClient;
+  FScroll.BorderStyle := bsNone;
+  FScroll.HorzScrollBar.Visible := False;
+  FScroll.VertScrollBar.Smooth := True;
+  FScroll.VertScrollBar.Tracking := True;
+  FScroll.Color := clWindow;
 
-  FHintMode := TRadioGroup.Create(Self);
-  FHintMode.Parent := Self;
-  FHintMode.Caption := 'Подсказка у каретки';
-  FHintMode.Left := 16;
-  FHintMode.Top := 374;
-  FHintMode.Width := 428;
-  FHintMode.Height := 78;
-  FHintMode.Items.Add('На время');
-  FHintMode.Items.Add('Следовать за кареткой');
-  FHintMode.Items.Add('Не показывать');
+  W := ClientWidth - GetSystemMetrics(SM_CXVSCROLL);
+  FMainPanel := TPanel.Create(Self);
+  FMainPanel.Parent := FScroll;
+  FMainPanel.BevelOuter := bvNone;
+  FMainPanel.ParentBackground := False;
+  FMainPanel.Color := clWindow;
+  FMainPanel.SetBounds(0, 0, W, S(100));
+  Y := 0;
+  BuildMain(Y);
 
-  FHintFlash := MakeCheck(Self, 'Вспышка при появлении', 28, 458, 190);
-  FHintAnimate := MakeCheck(Self, 'Анимация размера', 230, 458, 190);
+  FSpoiler := TLabel.Create(Self);
+  FSpoiler.Parent := FMainPanel;
+  FSpoiler.Cursor := crHandPoint;
+  FSpoiler.Font.Style := [fsBold];
+  FSpoiler.Font.Size := 10;
+  FSpoiler.Font.Color := TColor($9E5A00);
+  FSpoiler.Left := S(PageMargin);
+  FSpoiler.Top := Y + S(SectionGap) + S(4);
+  FSpoiler.OnClick := SpoilerClick;
+  Y := FSpoiler.Top + S(SectionHeight) + S(4);
+  FMainPanel.Height := Y;
 
-  FDiagnostics := TRadioGroup.Create(Self);
-  FDiagnostics.Parent := Self;
-  FDiagnostics.Caption := 'Диагностика';
-  FDiagnostics.Left := 16;
-  FDiagnostics.Top := 486;
-  FDiagnostics.Width := 428;
-  FDiagnostics.Height := 96;
-  FDiagnostics.Columns := 2;
-  FDiagnostics.Items.Add('Выкл.');
-  FDiagnostics.Items.Add('Ошибки');
-  FDiagnostics.Items.Add('Информация');
-  FDiagnostics.Items.Add('Подробно');
-
-  LearningList := TButton.Create(Self);
-  LearningList.Parent := Self;
-  LearningList.Caption := 'Список обучения';
-  LearningList.Height := 28;
-  LearningList.OnClick := LearningListClick;
-  FitCaption(Self, LearningList, 140);
-
-  ExclusionsButton := TButton.Create(Self);
-  ExclusionsButton.Parent := Self;
-  ExclusionsButton.Caption := 'Исключения';
-  ExclusionsButton.Height := 28;
-  ExclusionsButton.OnClick := ExclusionsClick;
-  FitCaption(Self, ExclusionsButton, 110);
-
-  RulesButton := TButton.Create(Self);
-  RulesButton.Parent := Self;
-  RulesButton.Caption := 'Правила приложений';
-  RulesButton.Height := 28;
-  RulesButton.OnClick := RulesClick;
-  FitCaption(Self, RulesButton, 160);
-
-  ResetLearning := TButton.Create(Self);
-  ResetLearning.Parent := Self;
-  ResetLearning.Caption := 'Сбросить обучение';
-  ResetLearning.Height := 28;
-  ResetLearning.OnClick := ResetLearningClick;
-  FitCaption(Self, ResetLearning, 120);
-
-  ResetDiagnostics := TButton.Create(Self);
-  ResetDiagnostics.Parent := Self;
-  ResetDiagnostics.Caption := 'Очистить диагностику';
-  ResetDiagnostics.Height := 28;
-  ResetDiagnostics.OnClick := ResetDiagnosticsClick;
-  FitCaption(Self, ResetDiagnostics, 160);
-
-  OkButton := TButton.Create(Self);
-  OkButton.Parent := Self;
-  OkButton.Caption := 'ОК';
-  OkButton.Height := 28;
-  OkButton.Default := True;
-  OkButton.ModalResult := mrOk;
-  FitCaption(Self, OkButton, 84);
+  FAdvancedPanel := TPanel.Create(Self);
+  FAdvancedPanel.Parent := FScroll;
+  FAdvancedPanel.BevelOuter := bvNone;
+  FAdvancedPanel.ParentBackground := False;
+  FAdvancedPanel.Color := clWindow;
+  FAdvancedPanel.SetBounds(0, FMainPanel.Height, W, S(100));
+  Y := 0;
+  BuildAdvanced(Y);
+  FAdvancedPanel.Height := Y;
+  FAdvancedPanel.Visible := False;
 
   CancelButton := TButton.Create(Self);
-  CancelButton.Parent := Self;
+  CancelButton.Parent := FBar;
   CancelButton.Caption := 'Отмена';
-  CancelButton.Height := 28;
   CancelButton.Cancel := True;
   CancelButton.ModalResult := mrCancel;
-  FitCaption(Self, CancelButton, 84);
+  CancelButton.SetBounds(ClientWidth - S(16) - S(96), S(13), S(96), S(30));
+  CancelButton.Anchors := [akTop, akRight];
 
-  Need := 16 + ResetLearning.Width + 8 + ResetDiagnostics.Width + 24 +
-    OkButton.Width + 8 + CancelButton.Width + 16;
-  RowWidth := 16 + LearningList.Width + 8 + ExclusionsButton.Width + 8 +
-    RulesButton.Width + 16;
-  if Need < RowWidth then
-    Need := RowWidth;
-  if ClientWidth < Need then
-    ClientWidth := Need;
-  FMode.Width := ClientWidth - 32;
-  FHintMode.Width := ClientWidth - 32;
-  FDiagnostics.Width := ClientWidth - 32;
-  FAutoSwitch.Width := ClientWidth - 40;
-  FSoundRU.Width := ClientWidth - 40;
-  FSoundSwitch.Width := ClientWidth - 40;
-  FDoubleShift.Width := ClientWidth - 40;
-  FSelectionLayout.Width := ClientWidth - 40;
-  FAutoStart.Width := ClientWidth - 40;
-  FFixCaps.Width := ClientWidth - 40;
-  FFixCapsLock.Width := ClientWidth - 40;
-  FPauseFullscreen.Width := ClientWidth - 40;
-  FEnglishSecure.Width := ClientWidth - 40;
-  FDoubleCtrl.Width := ClientWidth - 40;
+  FApplyButton := TButton.Create(Self);
+  FApplyButton.Parent := FBar;
+  FApplyButton.Caption := 'Применить';
+  FApplyButton.OnClick := ApplyClick;
+  FApplyButton.SetBounds(CancelButton.Left - S(8) - S(96), S(13), S(96), S(30));
+  FApplyButton.Anchors := [akTop, akRight];
 
-  ButtonTop := ClientHeight - 16 - ResetLearning.Height;
-  LearningList.SetBounds(16, ButtonTop - 36, LearningList.Width, LearningList.Height);
-  ExclusionsButton.SetBounds(LearningList.BoundsRect.Right + 8, ButtonTop - 36,
-    ExclusionsButton.Width, ExclusionsButton.Height);
-  RulesButton.SetBounds(ExclusionsButton.BoundsRect.Right + 8, ButtonTop - 36,
-    RulesButton.Width, RulesButton.Height);
-  ResetLearning.SetBounds(16, ButtonTop, ResetLearning.Width, ResetLearning.Height);
-  ResetDiagnostics.SetBounds(ResetLearning.BoundsRect.Right + 8, ButtonTop,
-    ResetDiagnostics.Width, ResetDiagnostics.Height);
-  CancelButton.SetBounds(ClientWidth - 16 - CancelButton.Width, ButtonTop,
-    CancelButton.Width, CancelButton.Height);
-  OkButton.SetBounds(CancelButton.Left - 8 - OkButton.Width, ButtonTop,
-    OkButton.Width, OkButton.Height);
+  OkButton := TButton.Create(Self);
+  OkButton.Parent := FBar;
+  OkButton.Caption := 'ОК';
+  OkButton.Default := True;
+  OkButton.OnClick := OkClick;
+  OkButton.SetBounds(FApplyButton.Left - S(8) - S(96), S(13), S(96), S(30));
+  OkButton.Anchors := [akTop, akRight];
 
   LoadValues;
+  FAdvancedShown := False;
+  SpoilerClick(nil);
+  SpoilerClick(nil);
+end;
+
+procedure TfrmSettings.FitHeight;
+var
+  Content, Limit: Integer;
+  Area: TRect;
+begin
+  Content := FMainPanel.Height;
+  if FAdvancedShown then
+    Inc(Content, FAdvancedPanel.Height);
+  Area := Screen.WorkAreaRect;
+  Limit := (Area.Bottom - Area.Top) * 9 div 10 - S(ButtonBarHeight) -
+    (Height - ClientHeight);
+  ClientHeight := Min(Content, Limit) + S(ButtonBarHeight);
+  if FAdvancedShown then
+    Top := Max(Area.Top, Min(Top, Area.Bottom - Height));
+  FScroll.VertScrollBar.Range := Content;
+  if Content <= FScroll.ClientHeight then
+    FScroll.VertScrollBar.Position := 0;
+end;
+
+procedure TfrmSettings.SpoilerClick(Sender: TObject);
+begin
+  FAdvancedShown := not FAdvancedShown;
+  FAdvancedPanel.Visible := FAdvancedShown;
+  if FAdvancedShown then
+    FSpoiler.Caption := #$25BE'  Дополнительно'
+  else
+    FSpoiler.Caption := #$25B8'  Дополнительно';
+  FitHeight;
+end;
+
+procedure TfrmSettings.WheelScroll(Sender: TObject; Shift: TShiftState;
+  WheelDelta: Integer; MousePos: TPoint; var Handled: Boolean);
+begin
+  FScroll.VertScrollBar.Position := FScroll.VertScrollBar.Position -
+    WheelDelta div 2;
+  Handled := True;
 end;
 
 procedure TfrmSettings.LoadValues;
+
+  procedure SetOn(ASwitch: TSwitch; AValue: Boolean);
+  begin
+    ASwitch.Checked := AValue;
+  end;
+
 begin
-  FAutoSwitch.Checked := AppSettings.AutoSwitchEnabled;
-  FSoundRU.Checked := AppSettings.SoundOnRussianInput;
-  FSoundSwitch.Checked := AppSettings.SoundOnSwitch;
-  FDoubleShift.Checked := AppSettings.DoubleLeftShiftEnabled;
-  FSelectionLayout.Checked := AppSettings.SwitchLayoutAfterSelection;
-  FAutoStart.Checked := AppSettings.AutoStart;
-  FFixCaps.Checked := AppSettings.FixInitialCaps;
-  FFixCapsLock.Checked := AppSettings.FixCapsLock;
-  FPauseFullscreen.Checked := AppSettings.PauseInFullscreen;
-  FEnglishSecure.Checked := AppSettings.EnglishInSecureFields;
-  FDoubleCtrl.Checked := AppSettings.DoubleCtrlEnabled;
-  FHintFlash.Checked := AppSettings.CaretHintFlash;
-  FHintAnimate.Checked := AppSettings.CaretHintAnimate;
+  SetOn(FAutoSwitch, AppSettings.AutoSwitchEnabled);
+  SetOn(FSoundRU, AppSettings.SoundOnRussianInput);
+  SetOn(FSoundSwitch, AppSettings.SoundOnSwitch);
+  SetOn(FDoubleShift, AppSettings.DoubleLeftShiftEnabled);
+  SetOn(FSelectionLayout, AppSettings.SwitchLayoutAfterSelection);
+  SetOn(FAutoStart, AppSettings.AutoStart);
+  SetOn(FFixCaps, AppSettings.FixInitialCaps);
+  SetOn(FFixCapsLock, AppSettings.FixCapsLock);
+  SetOn(FPauseFullscreen, AppSettings.PauseInFullscreen);
+  SetOn(FEnglishSecure, AppSettings.EnglishInSecureFields);
+  SetOn(FDoubleCtrl, AppSettings.DoubleCtrlEnabled);
+  SetOn(FHintFlash, AppSettings.CaretHintFlash);
+  SetOn(FHintAnimate, AppSettings.CaretHintAnimate);
   FMode.ItemIndex := Ord(AppSettings.HeuristicMode);
   FHintMode.ItemIndex := Ord(AppSettings.CaretHintMode);
   FDiagnostics.ItemIndex := Ord(AppSettings.DiagnosticsLevel);
@@ -811,8 +1155,18 @@ begin
     AppSettings.DiagnosticsLevel := TDiagnosticsLevel(FDiagnostics.ItemIndex);
   AppSettings.SaveToFile;
   ApplyAutoStart(AppSettings.AutoStart);
-  ConfigureDiagnostics(TPath.Combine(ExtractFilePath(ParamStr(0)),
-    'diagnostics.log'), AppSettings.DiagnosticsLevel);
+  ConfigureDiagnostics(DiagnosticsLogPath, AppSettings.DiagnosticsLevel);
+end;
+
+procedure TfrmSettings.ApplyClick(Sender: TObject);
+begin
+  ApplyValues;
+end;
+
+procedure TfrmSettings.OkClick(Sender: TObject);
+begin
+  ApplyValues;
+  ModalResult := mrOk;
 end;
 
 procedure TfrmSettings.ExclusionsClick(Sender: TObject);
@@ -839,6 +1193,9 @@ end;
 
 procedure TfrmSettings.ResetLearningClick(Sender: TObject);
 begin
+  if MessageDlg('Забыть всё, чему программа научилась на ваших отменах?',
+     mtConfirmation, [mbYes, mbNo], 0) <> mrYes then
+    Exit;
   AppSettings.ResetLearning;
   AppSettings.SaveToFile;
 end;
@@ -848,6 +1205,20 @@ begin
   ResetDiagnostics;
 end;
 
+procedure TfrmSettings.OpenLogClick(Sender: TObject);
+begin
+  if TFile.Exists(DiagnosticsLogPath) then
+    ShellExecute(0, 'open', PChar(DiagnosticsLogPath), nil, nil, SW_SHOWNORMAL)
+  else
+    MessageDlg('Журнал пуст.', mtInformation, [mbOK], 0);
+end;
+
+procedure TfrmSettings.OpenConfigClick(Sender: TObject);
+begin
+  ShellExecute(0, 'open', PChar(AppSettings.ConfigFilePath), nil, nil,
+    SW_SHOWNORMAL);
+end;
+
 function EditAppSettings: Boolean;
 var
   Dialog: TfrmSettings;
@@ -855,8 +1226,6 @@ begin
   Dialog := TfrmSettings.Create(Application);
   try
     Result := Dialog.ShowModal = mrOk;
-    if Result then
-      Dialog.ApplyValues;
   finally
     Dialog.Free;
   end;

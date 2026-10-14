@@ -15,6 +15,8 @@ uses
   Ghbdtn.Learning in 'src\Ghbdtn.Learning.pas',
   Ghbdtn.Phrase in 'src\Ghbdtn.Phrase.pas',
   Ghbdtn.LetterModel in 'src\Ghbdtn.LetterModel.pas',
+  Ghbdtn.WordFreq in 'src\Ghbdtn.WordFreq.pas',
+  Ghbdtn.Reading in 'src\Ghbdtn.Reading.pas',
   Ghbdtn.Heuristics in 'src\Ghbdtn.Heuristics.pas',
   Ghbdtn.Analyzer in 'src\Ghbdtn.Analyzer.pas',
   Ghbdtn.Fixer in 'src\Ghbdtn.Fixer.pas',

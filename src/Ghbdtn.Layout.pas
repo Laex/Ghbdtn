@@ -26,6 +26,11 @@ function ConvertCharSwap(AChar: Char): Char;
 function ConvertStringSwap(const AText: string): string;
 function MapVirtualKeyToChar(VKCode: DWORD; IsShift: Boolean; ALang: TLangKind): Char;
 
+// Whether a character of the English layout is typed by a key that is a
+// Russian letter on the Russian layout: , . ; ' [ ] ` and the shifted forms
+// of those. Such a character is punctuation or part of a Russian word.
+function IsRussianLetterKey(AChar: Char): Boolean;
+
 implementation
 
 const
@@ -123,22 +128,38 @@ end;
 
 procedure SwitchForegroundKeyboardLayout(ATargetLang: TLangKind);
 var
-  TargetWnd: HWND;
+  ForegroundWnd: HWND;
+  FocusRoot: HWND;
   TargetHKL: HKL;
-  LParamVal: LPARAM;
+  Info: TGUIThreadInfo;
 begin
-  TargetWnd := GetForegroundWindow;
-  if TargetWnd = 0 then Exit;
+  ForegroundWnd := GetForegroundWindow;
+  if ForegroundWnd = 0 then Exit;
 
   if ATargetLang = lkUnknown then
-    LParamVal := INPUTLANGCHANGE_FORWARD
-  else
   begin
-    TargetHKL := GetHKLForLang(ATargetLang);
-    LParamVal := LPARAM(TargetHKL);
+    // A cycle request is sent once: every extra copy would step again.
+    PostMessage(ForegroundWnd, WM_INPUTLANGCHANGEREQUEST, 0,
+      INPUTLANGCHANGE_FORWARD);
+    Exit;
   end;
 
-  PostMessage(TargetWnd, WM_INPUTLANGCHANGEREQUEST, 0, LParamVal);
+  TargetHKL := GetHKLForLang(ATargetLang);
+  PostMessage(ForegroundWnd, WM_INPUTLANGCHANGEREQUEST, 0, LPARAM(TargetHKL));
+
+  // A control with the focus is a child window and ignores the request; the
+  // top-level window above it takes it. When that window is not the
+  // foreground one (a host window of another thread), it gets the request
+  // too. Repeating an explicit layout is harmless.
+  ZeroMemory(@Info, SizeOf(Info));
+  Info.cbSize := SizeOf(Info);
+  if GetGUIThreadInfo(GetWindowThreadProcessId(ForegroundWnd, nil), Info) and
+     (Info.hwndFocus <> 0) then
+  begin
+    FocusRoot := GetAncestor(Info.hwndFocus, GA_ROOT);
+    if (FocusRoot <> 0) and (FocusRoot <> ForegroundWnd) then
+      PostMessage(FocusRoot, WM_INPUTLANGCHANGEREQUEST, 0, LPARAM(TargetHKL));
+  end;
 end;
 
 function ConvertCharSwap(AChar: Char): Char;
@@ -175,6 +196,12 @@ begin
   SetLength(Result, Length(AText));
   for I := 1 to Length(AText) do
     Result[I] := ConvertCharSwap(AText[I]);
+end;
+
+function IsRussianLetterKey(AChar: Char): Boolean;
+begin
+  Result := CharInSet(AChar, [',', '.', ';', '''', '[', ']', '`', '<', '>', '"',
+    '{', '}', '~']);
 end;
 
 function MapVirtualKeyToChar(VKCode: DWORD; IsShift: Boolean; ALang: TLangKind): Char;

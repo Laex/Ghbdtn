@@ -120,6 +120,8 @@
         <DCCReference Include="src\Ghbdtn.Learning.pas"/>
         <DCCReference Include="src\Ghbdtn.Phrase.pas"/>
         <DCCReference Include="src\Ghbdtn.LetterModel.pas"/>
+        <DCCReference Include="src\Ghbdtn.WordFreq.pas"/>
+        <DCCReference Include="src\Ghbdtn.Reading.pas"/>
         <DCCReference Include="src\Ghbdtn.Heuristics.pas"/>
         <DCCReference Include="src\Ghbdtn.Analyzer.pas"/>
         <DCCReference Include="src\Ghbdtn.Fixer.pas"/>

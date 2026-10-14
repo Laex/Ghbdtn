@@ -7,7 +7,11 @@ uses
 
 const
   PhraseWindow = 5;
-  PhraseBiasCap = 3;
+  // Quarter-bits one agreeing word adds to a language, as the cost of text
+  // in the language already used in the phrase.
+  PhraseBiasUnit = 6;
+  PhraseBiasHitCap = 3;
+  PhraseBiasCap = PhraseBiasHitCap * PhraseBiasUnit;
 
 type
   TPhraseContext = record
@@ -85,7 +89,7 @@ function PhraseScoreBias(const AContext: TPhraseContext; ALang: TLangKind): Inte
 var
   I, Hits: Integer;
 begin
-  // Two agreeing words add 2 points, three or more add 3.
+  // Two agreeing words add twice the unit, three or more add the cap.
   // The bonus stays under the balanced switch margin.
   Result := 0;
   if (ALang = lkUnknown) or (AContext.Count < 2) then
@@ -94,10 +98,10 @@ begin
   for I := 0 to AContext.Count - 1 do
     if AContext.Languages[I] = ALang then
       Inc(Hits);
-  if Hits >= PhraseBiasCap then
+  if Hits >= PhraseBiasHitCap then
     Result := PhraseBiasCap
   else if Hits >= 2 then
-    Result := Hits;
+    Result := Hits * PhraseBiasUnit;
 end;
 
 end.

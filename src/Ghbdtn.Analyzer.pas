@@ -62,11 +62,28 @@ implementation
 
 uses
   Ghbdtn.Diagnostics,
-  Ghbdtn.Heuristics;
+  Ghbdtn.Heuristics,
+  Ghbdtn.Reading;
 
 const
-  SwitchScoreMargin = 4;
-  UnknownLayoutMargin = 6;
+  // Quarter-bits (4 points = 1 bit) the other layout's reading must be ahead
+  // by before the word is switched.
+  SwitchEvidenceMargin = 28;
+  CautiousExtraMargin = 12;
+  AggressiveLessMargin = 8;
+  UnknownLayoutMargin = 36;
+  // The costliest letter of a text that still reads as a word of its
+  // language, with the word end counted as a letter.
+  PlausibleRussianLetterCost = 24;
+  PlausibleEnglishLetterCost = 26;
+  // What a capital Russian letter inside a word costs: the English layout
+  // types it with Shift on the same keys as "<" or "{", so code such as a<b
+  // would otherwise read as a Russian word.
+  InnerCapitalKeyCost = 48;
+  // The manual gesture switches a word unless what was typed is clearly the
+  // better reading: the other reading may trail by this much (a negative
+  // margin), so words the automatic rule refuses are still converted.
+  ManualSwitchMargin = -16;
 
 function LayoutToken(ALang: TLangKind): string;
 begin
@@ -94,12 +111,11 @@ begin
   Result := '"' + AValue.Replace('"', '''').Replace(#13, ' ').Replace(#10, ' ') + '"';
 end;
 
-function PartsTrace(const APrefix: string; const AParts: TScoreParts): string;
+function ReadingTrace(const APrefix: string; const AReading: TReading): string;
 begin
   Result :=
-    ' ' + APrefix + '_ngram=' + IntToStr(AParts.NGrams) +
-    ' ' + APrefix + '_dict=' + IntToStr(AParts.Dictionary) +
-    ' ' + APrefix + '_total=' + IntToStr(AParts.Total);
+    ' ' + APrefix + '_cost=' + IntToStr(AReading.Cost) +
+    ' ' + APrefix + '_listed=' + IntToStr(Ord(AReading.Listed));
 end;
 
 procedure TraceHeuristic(const ADetail: string);
@@ -113,12 +129,12 @@ begin
   // An unknown layout has no mode adjustment: the bar stays fixed.
   if not ALayoutKnown then
     Exit(UnknownLayoutMargin);
-  Result := SwitchScoreMargin;
+  Result := SwitchEvidenceMargin;
   case AMode of
     hmCautious:
-      Inc(Result, 3);
+      Inc(Result, CautiousExtraMargin);
     hmAggressive:
-      Dec(Result, 2);
+      Dec(Result, AggressiveLessMargin);
   end;
 end;
 
@@ -128,14 +144,53 @@ begin
     IsFileExtension(Copy(ALower, 2, MaxInt));
 end;
 
-function TypedLayout(const ALower: string; ACurrentLang: TLangKind): TLangKind;
+function TypedLayout(const AText: string; ACurrentLang: TLangKind): TLangKind;
+var
+  I: Integer;
 begin
   if ACurrentLang <> lkUnknown then
     Exit(ACurrentLang);
-  if (ALower <> '') and CharInSet(ALower[1], ['a'..'z']) then
-    Result := lkEN
-  else
-    Result := lkRU;
+  // The first letter says which alphabet the word is written in; keys such as
+  // "," that type Russian letters on the English layout say nothing.
+  for I := 1 to Length(AText) do
+    if CharInSet(AText[I], ['a'..'z', 'A'..'Z']) then
+      Exit(lkEN)
+    else if Ord(AText[I]) > 127 then
+      Exit(lkRU);
+  Result := lkEN;
+end;
+
+{ The text of a word the layout reading is measured on: punctuation around it
+  is dropped, except the keys of the English layout that type Russian letters,
+  which may be part of the word. }
+function InnerCapitalKeyCount(const AText: string): Integer;
+var
+  I: Integer;
+begin
+  Result := 0;
+  for I := 2 to Length(AText) do
+    if CharInSet(AText[I], ['<', '>', '"', '{', '}', '~']) then
+      Inc(Result);
+end;
+
+function TrimToReading(const AWord: string; ALayout: TLangKind): string;
+var
+  StartIdx, EndIdx: Integer;
+
+  function Belongs(C: Char): Boolean;
+  begin
+    Result := CharInSet(C, ['a'..'z', 'A'..'Z', '0'..'9']) or (Ord(C) > 127) or
+      ((ALayout <> lkRU) and IsRussianLetterKey(C));
+  end;
+
+begin
+  StartIdx := 1;
+  EndIdx := Length(AWord);
+  while (StartIdx <= EndIdx) and not Belongs(AWord[StartIdx]) do
+    Inc(StartIdx);
+  while (EndIdx >= StartIdx) and not Belongs(AWord[EndIdx]) do
+    Dec(EndIdx);
+  Result := Copy(AWord, StartIdx, EndIdx - StartIdx + 1);
 end;
 
 function CleanWordString(const S: string): string;
@@ -216,22 +271,25 @@ begin
     UntrackedPhrase);
 end;
 
-function AnalyzeWord(const AWord: string; ACurrentLang: TLangKind;
+function AnalyzeWordCore(const AWord: string; ACurrentLang: TLangKind;
   AMode: THeuristicMode; const ANeverSwitch: TNeverSwitchCallback;
   const APreferSwitch: TPreferSwitchCallback;
-  const APhrase: TPhraseContext): TAnalysisResult;
+  const APhrase: TPhraseContext; AManual: Boolean): TAnalysisResult;
 var
   CleanW: string;
   LowerWord: string;
+  ReadText: string;
+  ReadCased: string;
+  OtherText: string;
   Converted: string;
-  LowerConverted: string;
-  OriginalScore: Integer;
-  ConvertedScore: Integer;
-  Margin: Integer;
   SourceLayout: TLangKind;
-  TypedParts: TScoreParts;
-  OtherParts: TScoreParts;
   OtherLayout: TLangKind;
+  Typed: TReading;
+  Other: TReading;
+  Margin: Integer;
+  Bias: Integer;
+  Delta: Integer;
+  Plausible: Integer;
   Head: string;
 begin
   Result.NeedsSwitch := False;
@@ -257,10 +315,10 @@ begin
     TraceHeuristic(Head + ' reason=protected switch=0');
     Exit;
   end;
+  SourceLayout := TypedLayout(AWord, ACurrentLang);
   if Assigned(APreferSwitch) and APreferSwitch(LowerWord) then
   begin
     Result.Mark := dmLearning;
-    SourceLayout := TypedLayout(LowerWord, ACurrentLang);
     Result.NeedsSwitch := True;
     Result.ConvertedText := ConvertStringSwap(AWord);
     if SourceLayout = lkEN then
@@ -276,9 +334,9 @@ begin
   // to score. Typed after Russian words it is taken as Russian; at the start
   // of a phrase it stays put, since "vs" or "c" is just as likely English.
   if (Length(CleanW) <= 2) and (ACurrentLang <> lkRU) and
-     IsCommonRussianWord(ConvertStringSwap(CleanW).ToLower) then
+     IsRussianFunctionWord(ConvertStringSwap(CleanW).ToLower) then
   begin
-    if APhrase.Untracked or PhraseEndsWith(APhrase, lkRU) then
+    if AManual or APhrase.Untracked or PhraseEndsWith(APhrase, lkRU) then
     begin
       Result.Mark := dmDictionary;
       Result.NeedsSwitch := True;
@@ -291,13 +349,15 @@ begin
       TraceHeuristic(Head + ' reason=short_needs_context switch=0');
     Exit;
   end;
-  if Length(CleanW) < 2 then
+  ReadCased := TrimToReading(AWord, SourceLayout);
+  ReadText := ReadCased.ToLower;
+  if Length(ReadText) < 2 then
   begin
     TraceHeuristic(Head + ' reason=too_short switch=0');
     Exit;
   end;
   // "юзва" is ".pdf" typed on the Russian layout. A file extension has no
-  // vowels or n-grams to score, so it is recognized from the list.
+  // vowels or letter sequences to score, so it is recognized from the list.
   if (ACurrentLang <> lkEN) and IsDottedExtension(ConvertStringSwap(CleanW).ToLower) then
   begin
     Result.Mark := dmDictionary;
@@ -310,58 +370,82 @@ begin
   end;
 
   Converted := ConvertStringSwap(AWord);
-  LowerConverted := ConvertStringSwap(CleanW).ToLower;
-  SourceLayout := TypedLayout(LowerWord, ACurrentLang);
+  OtherText := ConvertStringSwap(ReadText).ToLower;
   if SourceLayout = lkEN then
   begin
-    TypedParts := ExplainEnglish(LowerWord);
-    OtherParts := ExplainRussian(LowerConverted);
+    OtherLayout := lkRU;
+    Typed := ReadAsEnglish(ReadText);
+    Other := ReadAsRussian(OtherText);
+    Inc(Other.Cost, InnerCapitalKeyCost * InnerCapitalKeyCount(ReadCased));
   end
   else
   begin
-    TypedParts := ExplainRussian(LowerWord);
-    OtherParts := ExplainEnglish(LowerConverted);
-  end;
-  if SourceLayout = lkEN then
-    OtherLayout := lkRU
-  else
     OtherLayout := lkEN;
+    Typed := ReadAsRussian(ReadText);
+    Other := ReadAsEnglish(OtherText);
+  end;
+  if not (Typed.Valid and Other.Valid) then
+  begin
+    TraceHeuristic(Head + ' reason=no_reading switch=0');
+    Exit;
+  end;
   // A word of the other layout needs a vowel; without one the converted text
   // is an abbreviation typed as it is (pdf, ltd), not a word typed wrongly.
-  if (Length(LowerConverted) >= 3) and not HasVowel(LowerConverted, OtherLayout) then
+  // A Russian abbreviation of the word list (млн, снг) is the exception.
+  if (Length(Other.Core) >= 3) and not HasVowel(Other.Core, OtherLayout) and
+     not ((OtherLayout = lkRU) and Other.Listed) then
   begin
     TraceHeuristic(Head + ' reason=no_vowel switch=0');
     Exit;
   end;
-  OriginalScore := TypedParts.Total + PhraseScoreBias(APhrase, SourceLayout);
-  ConvertedScore := OtherParts.Total +
-    PhraseScoreBias(APhrase, OtherLayout);
-  Margin := SwitchMargin(AMode, ACurrentLang <> lkUnknown);
-  if SourceLayout = lkEN then
+  // The text switched to must read as a word of its language by itself, not
+  // only be less improbable than what was typed: single letters joined by
+  // commas or periods ("a,b,c") read as nothing in either language.
+  if not Other.Listed then
   begin
-    if ConvertedScore - OriginalScore >= Margin then
-      Result.TargetLang := lkRU;
-  end
-  else if ConvertedScore - OriginalScore >= Margin then
-    Result.TargetLang := lkEN;
-
-  if Result.TargetLang <> lkUnknown then
+    if OtherLayout = lkRU then
+      Plausible := PlausibleRussianLetterCost
+    else
+      Plausible := PlausibleEnglishLetterCost;
+    if Other.PlainCost > Plausible * (Length(Other.Core) + 1) then
+    begin
+      TraceHeuristic(Head + ' reason=implausible switch=0');
+      Exit;
+    end;
+  end;
+  Bias := PhraseScoreBias(APhrase, OtherLayout) -
+    PhraseScoreBias(APhrase, SourceLayout);
+  Delta := Typed.Cost - Other.Cost + Bias;
+  if AManual then
+    Margin := ManualSwitchMargin
+  else
+    Margin := SwitchMargin(AMode, ACurrentLang <> lkUnknown);
+  if Delta >= Margin then
   begin
     Result.NeedsSwitch := True;
+    Result.TargetLang := OtherLayout;
     Result.ConvertedText := Converted;
-    if OtherParts.Dictionary > 0 then
+    if Other.Listed then
       Result.Mark := dmDictionary;
   end;
   TraceHeuristic(Head + ' reason=score typed=' + LayoutToken(SourceLayout) +
-    ' other=' + QuoteTrace(LowerConverted) +
-    ' phrase=' + IntToStr(PhraseScoreBias(APhrase, OtherLayout) -
-      PhraseScoreBias(APhrase, SourceLayout)) +
+    ' other=' + QuoteTrace(OtherText) +
+    ' phrase=' + IntToStr(Bias) +
     ' margin=' + IntToStr(Margin) +
-    ' delta=' + IntToStr(ConvertedScore - OriginalScore) +
+    ' delta=' + IntToStr(Delta) +
     ' switch=' + IntToStr(Ord(Result.NeedsSwitch)) +
     ' target=' + LayoutToken(Result.TargetLang) +
-    PartsTrace(LayoutToken(SourceLayout), TypedParts) +
-    PartsTrace(LayoutToken(OtherLayout), OtherParts));
+    ReadingTrace(LayoutToken(SourceLayout), Typed) +
+    ReadingTrace(LayoutToken(OtherLayout), Other));
+end;
+
+function AnalyzeWord(const AWord: string; ACurrentLang: TLangKind;
+  AMode: THeuristicMode; const ANeverSwitch: TNeverSwitchCallback;
+  const APreferSwitch: TPreferSwitchCallback;
+  const APhrase: TPhraseContext): TAnalysisResult;
+begin
+  Result := AnalyzeWordCore(AWord, ACurrentLang, AMode, ANeverSwitch,
+    APreferSwitch, APhrase, False);
 end;
 
 function AnalyzeWord(const AWord: string;
@@ -425,10 +509,7 @@ begin
     Token := Copy(AText, StartIdx, I - StartIdx);
     if Length(Token) < 2 then
       Continue;
-    if CharInSet(Token[1], ['a'..'z', 'A'..'Z']) then
-      Lang := lkEN
-    else
-      Lang := lkRU;
+    Lang := TypedLayout(Token, lkUnknown);
     TokenResult := AnalyzeWord(Token, Lang, AMode, ANeverSwitch);
     if TokenResult.NeedsSwitch then
     begin
@@ -441,10 +522,7 @@ begin
   if not AnyNeeds then
   begin
     // Whole selection as one token (phrases without spaces still handled).
-    if CharInSet(AText[1], ['a'..'z', 'A'..'Z']) then
-      Lang := lkEN
-    else
-      Lang := lkRU;
+    Lang := TypedLayout(AText, lkUnknown);
     Result := AnalyzeWord(AText, Lang, AMode, ANeverSwitch);
     if Result.NeedsSwitch then
       Result.ConvertedText := ConvertStringSwap(AText);
@@ -462,9 +540,9 @@ begin
   Result := ConvertSelectionSmart(AText, AMode, ANeverSwitch, nil);
 end;
 
-function ConvertSelectionSmart(const AText: string; AMode: THeuristicMode;
+function ConvertTokens(const AText: string; AMode: THeuristicMode;
   const ANeverSwitch: TNeverSwitchCallback;
-  const APreferSwitch: TPreferSwitchCallback): string;
+  const APreferSwitch: TPreferSwitchCallback; AManual: Boolean): string;
 var
   I, StartIdx: Integer;
   Token: string;
@@ -490,16 +568,21 @@ begin
     Token := Copy(AText, StartIdx, I - StartIdx);
     if Token = '' then
       Continue;
-    if CharInSet(Token[1], ['a'..'z', 'A'..'Z']) then
-      Lang := lkEN
-    else
-      Lang := lkRU;
-    Analysis := AnalyzeWord(Token, Lang, AMode, ANeverSwitch, APreferSwitch);
+    Lang := TypedLayout(Token, lkUnknown);
+    Analysis := AnalyzeWordCore(Token, Lang, AMode, ANeverSwitch,
+      APreferSwitch, UntrackedPhrase, AManual);
     if Analysis.NeedsSwitch and (Analysis.ConvertedText <> '') then
       Result := Result + Analysis.ConvertedText
     else
       Result := Result + Token;
   end;
+end;
+
+function ConvertSelectionSmart(const AText: string; AMode: THeuristicMode;
+  const ANeverSwitch: TNeverSwitchCallback;
+  const APreferSwitch: TPreferSwitchCallback): string;
+begin
+  Result := ConvertTokens(AText, AMode, ANeverSwitch, APreferSwitch, False);
 end;
 
 function TextHasBothScripts(const AText: string): Boolean;
@@ -523,16 +606,35 @@ begin
   Result := False;
 end;
 
+function CountTokens(const AText: string): Integer;
+var
+  I: Integer;
+  InToken: Boolean;
+begin
+  Result := 0;
+  InToken := False;
+  for I := 1 to Length(AText) do
+    if CharInSet(AText[I], [' ', #9, #10, #13]) then
+      InToken := False
+    else if not InToken then
+    begin
+      InToken := True;
+      Inc(Result);
+    end;
+end;
+
 function ConvertManualSelection(const AText: string; AMode: THeuristicMode;
   const ANeverSwitch: TNeverSwitchCallback;
   const APreferSwitch: TPreferSwitchCallback): string;
 begin
-  // A uniform block is what the gesture asked to flip. A mix keeps the
-  // words that already belong to their layout.
-  if TextHasBothScripts(AText) then
-    Result := ConvertSelectionSmart(AText, AMode, ANeverSwitch, APreferSwitch)
+  // A single word is the one the gesture points at, so it is flipped whatever
+  // it reads like. In longer text each word is flipped unless what was typed
+  // is clearly the better reading, so words that already belong to their
+  // layout stay and the ones the automatic rule left alone are converted.
+  if (CountTokens(AText) <= 1) and not TextHasBothScripts(AText) then
+    Result := ConvertStringSwap(AText)
   else
-    Result := ConvertStringSwap(AText);
+    Result := ConvertTokens(AText, AMode, ANeverSwitch, APreferSwitch, True);
 end;
 
 function IsLayoutLetter(C: Char): Boolean;

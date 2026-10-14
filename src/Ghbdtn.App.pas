@@ -31,31 +31,13 @@ type
     FPopupMenu: TPopupMenu;
     FTimer: TTimer;
     FMnuAutoSwitch: TMenuItem;
-    FMnuSoundRU: TMenuItem;
-    FMnuSoundSwitch: TMenuItem;
-    FMnuDoubleLShift: TMenuItem;
-    FMnuSelectionLayout: TMenuItem;
-    FMnuAutoStart: TMenuItem;
-    FMnuHintTimed: TMenuItem;
-    FMnuHintFollow: TMenuItem;
-    FMnuHintOff: TMenuItem;
-    FMnuHintFlash: TMenuItem;
-    FMnuHintAnimate: TMenuItem;
     FCaretHintArmed: Boolean;
+    FMnuExit: TMenuItem;
     FMnuCurrentApp: TMenuItem;
     FMnuCurrentAppRule: TMenuItem;
-    FMnuExcludeCurrentApp: TMenuItem;
-    FMnuModeCautious: TMenuItem;
-    FMnuModeBalanced: TMenuItem;
-    FMnuModeAggressive: TMenuItem;
-    FMnuResetLearning: TMenuItem;
-    FMnuDiagOff: TMenuItem;
-    FMnuDiagError: TMenuItem;
-    FMnuDiagInfo: TMenuItem;
-    FMnuDiagVerbose: TMenuItem;
-    FMnuResetDiagnostics: TMenuItem;
-    FMnuOpenConfig: TMenuItem;
-    FMnuExit: TMenuItem;
+    FMnuApplication: TMenuItem;
+    FMnuExcludeItem: TMenuItem;
+    FMnuSelection: TMenuItem;
     FMnuSettings: TMenuItem;
     FMnuPause: TMenuItem;
     FMnuCase: TMenuItem;
@@ -85,22 +67,9 @@ type
 
     procedure mnuAutoSwitchClick(Sender: TObject);
     procedure mnuPauseClick(Sender: TObject);
-    procedure mnuSoundRUClick(Sender: TObject);
-    procedure mnuSoundSwitchClick(Sender: TObject);
-    procedure mnuDoubleLShiftClick(Sender: TObject);
-    procedure mnuSelectionLayoutClick(Sender: TObject);
-    procedure mnuAutoStartClick(Sender: TObject);
-    procedure mnuHintModeClick(Sender: TObject);
-    procedure mnuHintFlashClick(Sender: TObject);
-    procedure mnuHintAnimateClick(Sender: TObject);
     procedure mnuCurrentAppClick(Sender: TObject);
     procedure mnuCurrentAppRuleClick(Sender: TObject);
     procedure mnuExcludeCurrentAppClick(Sender: TObject);
-    procedure mnuModeClick(Sender: TObject);
-    procedure mnuResetLearningClick(Sender: TObject);
-    procedure mnuDiagnosticsClick(Sender: TObject);
-    procedure mnuResetDiagnosticsClick(Sender: TObject);
-    procedure mnuOpenConfigClick(Sender: TObject);
     procedure mnuSettingsClick(Sender: TObject);
     procedure mnuExitClick(Sender: TObject);
   public
@@ -303,66 +272,39 @@ procedure TfrmApp.CreateTrayMenu;
 begin
   FPopupMenu.Items.Clear;
 
-  FMnuSettings := AddMenuItem('Настройки', mnuSettingsClick);
+  FMnuAutoSwitch := AddMenuItem('Автопереключение', mnuAutoSwitchClick);
   FMnuPause := AddMenuItem('Пауза', mnuPauseClick);
   FMnuPauseFor := AddMenuItem('Пауза на время', nil);
   AddPauseItem('На 30 минут', 30);
   AddPauseItem('На 1 час', 60);
   AddPauseItem('До перезапуска', 0);
-  FMnuCase := AddMenuItem('Регистр выделения или слова', nil);
+  FMnuSelection := AddMenuItem('Выделение или слово', nil);
+  FMnuCase := FMnuSelection;
+  FMnuTranslit := FMnuSelection;
   AddCaseItem('ВЕРХНИЙ РЕГИСТР', cmUpper);
   AddCaseItem('нижний регистр', cmLower);
   AddCaseItem('Первая заглавная', cmCapitalize);
   AddCaseItem('иНВЕРСИЯ РЕГИСТРА', cmInvert);
-  FMnuTranslit := AddMenuItem('Транслит выделения или слова', nil);
+  FMnuSelection.Add(NewLine);
   AddTranslitItem('В транслит (привет -> privet)', tdToLatin);
   AddTranslitItem('Из транслита (privet -> привет)', tdToCyrillic);
   AddMenuItem('-', nil);
-  FMnuAutoSwitch := AddMenuItem('Автопереключение', mnuAutoSwitchClick);
-  FMnuSoundRU := AddMenuItem('Звук при вводе в RU', mnuSoundRUClick);
-  FMnuSoundSwitch := AddMenuItem('Звук при переключении', mnuSoundSwitchClick);
-  FMnuDoubleLShift := AddMenuItem('Двойной Left Shift', mnuDoubleLShiftClick);
-  FMnuSelectionLayout := AddMenuItem(
-    'Менять раскладку после конвертации выделения', mnuSelectionLayoutClick);
+  FMnuApplication := AddMenuItem('Текущее приложение', nil);
+  FMnuCurrentApp := TMenuItem.Create(FPopupMenu);
+  FMnuCurrentApp.Caption := 'Временно отключить';
+  FMnuCurrentApp.OnClick := mnuCurrentAppClick;
+  FMnuApplication.Add(FMnuCurrentApp);
+  FMnuCurrentAppRule := TMenuItem.Create(FPopupMenu);
+  FMnuCurrentAppRule.Caption := 'Автопереключение включено';
+  FMnuCurrentAppRule.OnClick := mnuCurrentAppRuleClick;
+  FMnuApplication.Add(FMnuCurrentAppRule);
+  FMnuApplication.Add(NewLine);
+  FMnuExcludeItem := TMenuItem.Create(FPopupMenu);
+  FMnuExcludeItem.Caption := 'Добавить в исключения';
+  FMnuExcludeItem.OnClick := mnuExcludeCurrentAppClick;
+  FMnuApplication.Add(FMnuExcludeItem);
   AddMenuItem('-', nil);
-  FMnuCurrentApp := AddMenuItem('Временно отключить для текущего приложения',
-    mnuCurrentAppClick);
-  FMnuCurrentAppRule := AddMenuItem(
-    'Автопереключение для текущего приложения', mnuCurrentAppRuleClick);
-  FMnuExcludeCurrentApp := AddMenuItem(
-    'Добавить текущее приложение в исключения', mnuExcludeCurrentAppClick);
-  AddMenuItem('-', nil);
-  FMnuModeCautious := AddMenuItem('Режим: осторожный', mnuModeClick);
-  FMnuModeCautious.Tag := Integer(hmCautious);
-  FMnuModeCautious.AutoCheck := False;
-  FMnuModeBalanced := AddMenuItem('Режим: сбалансированный', mnuModeClick);
-  FMnuModeBalanced.Tag := Integer(hmBalanced);
-  FMnuModeAggressive := AddMenuItem('Режим: агрессивный', mnuModeClick);
-  FMnuModeAggressive.Tag := Integer(hmAggressive);
-  FMnuResetLearning := AddMenuItem('Сбросить обучение', mnuResetLearningClick);
-  AddMenuItem('-', nil);
-  FMnuHintTimed := AddMenuItem('Подсказка у каретки: на время', mnuHintModeClick);
-  FMnuHintTimed.Tag := Ord(chTimed);
-  FMnuHintFollow := AddMenuItem('Подсказка у каретки: следовать', mnuHintModeClick);
-  FMnuHintFollow.Tag := Ord(chFollow);
-  FMnuHintOff := AddMenuItem('Подсказка у каретки: не показывать', mnuHintModeClick);
-  FMnuHintOff.Tag := Ord(chOff);
-  FMnuHintFlash := AddMenuItem('Подсказка: вспышка при появлении', mnuHintFlashClick);
-  FMnuHintAnimate := AddMenuItem('Подсказка: анимация размера', mnuHintAnimateClick);
-  AddMenuItem('-', nil);
-  FMnuDiagOff := AddMenuItem('Диагностика: выкл.', mnuDiagnosticsClick);
-  FMnuDiagOff.Tag := Integer(dlOff);
-  FMnuDiagError := AddMenuItem('Диагностика: ошибки', mnuDiagnosticsClick);
-  FMnuDiagError.Tag := Integer(dlError);
-  FMnuDiagInfo := AddMenuItem('Диагностика: информация', mnuDiagnosticsClick);
-  FMnuDiagInfo.Tag := Integer(dlInfo);
-  FMnuDiagVerbose := AddMenuItem('Диагностика: подробно', mnuDiagnosticsClick);
-  FMnuDiagVerbose.Tag := Integer(dlVerbose);
-  FMnuResetDiagnostics := AddMenuItem('Очистить диагностику',
-    mnuResetDiagnosticsClick);
-  FMnuAutoStart := AddMenuItem('Автозапуск', mnuAutoStartClick);
-  AddMenuItem('-', nil);
-  FMnuOpenConfig := AddMenuItem('Открыть config.json', mnuOpenConfigClick);
+  FMnuSettings := AddMenuItem('Настройки...', mnuSettingsClick);
   AddMenuItem('-', nil);
   FMnuExit := AddMenuItem('Выход', mnuExitClick);
 end;
@@ -390,40 +332,10 @@ begin
   if FMnuPause <> nil then
     FMnuPause.Checked := (HookManager <> nil) and HookManager.IsGloballyPaused;
   if FMnuAutoSwitch <> nil then FMnuAutoSwitch.Checked := AppSettings.AutoSwitchEnabled;
-  if FMnuSoundRU <> nil then FMnuSoundRU.Checked := AppSettings.SoundOnRussianInput;
-  if FMnuSoundSwitch <> nil then FMnuSoundSwitch.Checked := AppSettings.SoundOnSwitch;
-  if FMnuDoubleLShift <> nil then FMnuDoubleLShift.Checked := AppSettings.DoubleLeftShiftEnabled;
-  if FMnuSelectionLayout <> nil then
-    FMnuSelectionLayout.Checked := AppSettings.SwitchLayoutAfterSelection;
-  if FMnuAutoStart <> nil then FMnuAutoStart.Checked := AppSettings.AutoStart;
   if (HookManager <> nil) and (FMnuCurrentApp <> nil) then
     FMnuCurrentApp.Checked := HookManager.IsCurrentApplicationDisabled;
   if (HookManager <> nil) and (FMnuCurrentAppRule <> nil) then
     FMnuCurrentAppRule.Checked := HookManager.IsCurrentApplicationAutoSwitchEnabled;
-  if FMnuModeCautious <> nil then
-    FMnuModeCautious.Checked := AppSettings.HeuristicMode = hmCautious;
-  if FMnuModeBalanced <> nil then
-    FMnuModeBalanced.Checked := AppSettings.HeuristicMode = hmBalanced;
-  if FMnuModeAggressive <> nil then
-    FMnuModeAggressive.Checked := AppSettings.HeuristicMode = hmAggressive;
-  if FMnuHintTimed <> nil then
-    FMnuHintTimed.Checked := AppSettings.CaretHintMode = chTimed;
-  if FMnuHintFollow <> nil then
-    FMnuHintFollow.Checked := AppSettings.CaretHintMode = chFollow;
-  if FMnuHintOff <> nil then
-    FMnuHintOff.Checked := AppSettings.CaretHintMode = chOff;
-  if FMnuHintFlash <> nil then
-    FMnuHintFlash.Checked := AppSettings.CaretHintFlash;
-  if FMnuHintAnimate <> nil then
-    FMnuHintAnimate.Checked := AppSettings.CaretHintAnimate;
-  if FMnuDiagOff <> nil then
-    FMnuDiagOff.Checked := AppSettings.DiagnosticsLevel = dlOff;
-  if FMnuDiagError <> nil then
-    FMnuDiagError.Checked := AppSettings.DiagnosticsLevel = dlError;
-  if FMnuDiagInfo <> nil then
-    FMnuDiagInfo.Checked := AppSettings.DiagnosticsLevel = dlInfo;
-  if FMnuDiagVerbose <> nil then
-    FMnuDiagVerbose.Checked := AppSettings.DiagnosticsLevel = dlVerbose;
 end;
 
 procedure TfrmApp.PopupMenuPopup(Sender: TObject);
@@ -441,57 +353,6 @@ end;
 procedure TfrmApp.mnuAutoSwitchClick(Sender: TObject);
 begin
   AppSettings.AutoSwitchEnabled := not AppSettings.AutoSwitchEnabled;
-  SaveSettings;
-end;
-
-procedure TfrmApp.mnuSoundRUClick(Sender: TObject);
-begin
-  AppSettings.SoundOnRussianInput := not AppSettings.SoundOnRussianInput;
-  SaveSettings;
-end;
-
-procedure TfrmApp.mnuSoundSwitchClick(Sender: TObject);
-begin
-  AppSettings.SoundOnSwitch := not AppSettings.SoundOnSwitch;
-  SaveSettings;
-end;
-
-procedure TfrmApp.mnuDoubleLShiftClick(Sender: TObject);
-begin
-  AppSettings.DoubleLeftShiftEnabled := not AppSettings.DoubleLeftShiftEnabled;
-  SaveSettings;
-end;
-
-procedure TfrmApp.mnuSelectionLayoutClick(Sender: TObject);
-begin
-  AppSettings.SwitchLayoutAfterSelection :=
-    not AppSettings.SwitchLayoutAfterSelection;
-  SaveSettings;
-end;
-
-procedure TfrmApp.mnuAutoStartClick(Sender: TObject);
-begin
-  AppSettings.AutoStart := not AppSettings.AutoStart;
-  AppSettings.SaveToFile;
-  ApplyAutoStart(AppSettings.AutoStart);
-  UpdateMenuItems;
-end;
-
-procedure TfrmApp.mnuHintModeClick(Sender: TObject);
-begin
-  AppSettings.CaretHintMode := TCaretHintMode((Sender as TMenuItem).Tag);
-  SaveSettings;
-end;
-
-procedure TfrmApp.mnuHintFlashClick(Sender: TObject);
-begin
-  AppSettings.CaretHintFlash := not AppSettings.CaretHintFlash;
-  SaveSettings;
-end;
-
-procedure TfrmApp.mnuHintAnimateClick(Sender: TObject);
-begin
-  AppSettings.CaretHintAnimate := not AppSettings.CaretHintAnimate;
   SaveSettings;
 end;
 
@@ -514,44 +375,6 @@ begin
   if HookManager <> nil then
     HookManager.AddCurrentApplicationToExclusions;
   UpdateMenuItems;
-end;
-
-procedure TfrmApp.mnuModeClick(Sender: TObject);
-begin
-  AppSettings.HeuristicMode := THeuristicMode((Sender as TMenuItem).Tag);
-  SaveSettings;
-end;
-
-procedure TfrmApp.mnuResetLearningClick(Sender: TObject);
-begin
-  AppSettings.ResetLearning;
-  SaveSettings;
-end;
-
-procedure TfrmApp.mnuDiagnosticsClick(Sender: TObject);
-begin
-  AppSettings.DiagnosticsLevel :=
-    TDiagnosticsLevel((Sender as TMenuItem).Tag);
-  ConfigureDiagnostics(TPath.Combine(ExtractFilePath(ParamStr(0)),
-    'diagnostics.log'), AppSettings.DiagnosticsLevel);
-  SaveSettings;
-end;
-
-procedure TfrmApp.mnuResetDiagnosticsClick(Sender: TObject);
-begin
-  ResetDiagnostics;
-end;
-
-procedure TfrmApp.mnuOpenConfigClick(Sender: TObject);
-begin
-  ShellExecute(
-    0,
-    'open',
-    PChar(AppSettings.ConfigFilePath),
-    nil,
-    nil,
-    SW_SHOWNORMAL
-  );
 end;
 
 procedure TfrmApp.mnuSettingsClick(Sender: TObject);
