@@ -65,6 +65,12 @@ type
     FLock: TCriticalSection;
     FFileLock: TCriticalSection;
     FExclusions: TStringList;
+    FCaseFixKept: TStringList;
+    FFixInitialCaps: Boolean;
+    FFixCapsLock: Boolean;
+    FPauseInFullscreen: Boolean;
+    FEnglishInSecureFields: Boolean;
+    FDoubleCtrlEnabled: Boolean;
     FApplicationRules: TObjectList<TApplicationRule>;
     FLearning: TDictionary<string, TLearningEntry>;
     FAppLearning: TObjectDictionary<string, TDictionary<string, TLearningEntry>>;
@@ -109,6 +115,16 @@ type
     procedure SetCaretHintFlash(AValue: Boolean);
     function GetCaretHintAnimate: Boolean;
     procedure SetCaretHintAnimate(AValue: Boolean);
+    function GetFixInitialCaps: Boolean;
+    procedure SetFixInitialCaps(AValue: Boolean);
+    function GetFixCapsLock: Boolean;
+    procedure SetFixCapsLock(AValue: Boolean);
+    function GetPauseInFullscreen: Boolean;
+    procedure SetPauseInFullscreen(AValue: Boolean);
+    function GetEnglishInSecureFields: Boolean;
+    procedure SetEnglishInSecureFields(AValue: Boolean);
+    function GetDoubleCtrlEnabled: Boolean;
+    procedure SetDoubleCtrlEnabled(AValue: Boolean);
     procedure SetDefaults;
     procedure SetDefaultsUnlocked;
     function LoadJsonFile(const APath: string): Boolean;
@@ -140,6 +156,8 @@ type
       AOverrideSwitchSound, ASwitchSound: Boolean;
       AOverrideMode: Boolean; AMode: THeuristicMode);
     procedure RemoveApplicationRule(const AProcessName: string);
+    function IsCaseFixKept(const AWord: string): Boolean;
+    procedure KeepCaseFixWord(const AWord: string);
     function ListExclusions: TArray<string>;
     procedure RemoveExclusion(const APattern: string);
     function ListApplicationRules: TArray<TApplicationRuleView>;
@@ -172,6 +190,11 @@ type
     property CaretHintMode: TCaretHintMode read GetCaretHintMode write SetCaretHintMode;
     property CaretHintFlash: Boolean read GetCaretHintFlash write SetCaretHintFlash;
     property CaretHintAnimate: Boolean read GetCaretHintAnimate write SetCaretHintAnimate;
+    property FixInitialCaps: Boolean read GetFixInitialCaps write SetFixInitialCaps;
+    property FixCapsLock: Boolean read GetFixCapsLock write SetFixCapsLock;
+    property PauseInFullscreen: Boolean read GetPauseInFullscreen write SetPauseInFullscreen;
+    property EnglishInSecureFields: Boolean read GetEnglishInSecureFields write SetEnglishInSecureFields;
+    property DoubleCtrlEnabled: Boolean read GetDoubleCtrlEnabled write SetDoubleCtrlEnabled;
   end;
 
 var
@@ -187,6 +210,12 @@ uses
 
 const
   SettingsSchemaVersion = 4;
+  MaxCaseFixKept = 500;
+  // Password managers are always excluded and cannot be removed from the list.
+  AlwaysExcludedProcesses: array[0..9] of string = (
+    'keepass.exe', 'keepassxc.exe', '1password.exe', 'bitwarden.exe',
+    'dashlane.exe', 'enpass.exe', 'roboform.exe', 'nordpass.exe',
+    'lastpass.exe', 'protonpass.exe');
 
 function WildcardMatch(const APattern, AValue: string): Boolean;
 var
@@ -298,6 +327,8 @@ begin
   FFileLock := TCriticalSection.Create;
   FExclusions := TStringList.Create;
   FExclusions.CaseSensitive := False;
+  FCaseFixKept := TStringList.Create;
+  FCaseFixKept.CaseSensitive := False;
   FApplicationRules := TObjectList<TApplicationRule>.Create(True);
   FLearning := TDictionary<string, TLearningEntry>.Create;
   FAppLearning := TObjectDictionary<string, TDictionary<string, TLearningEntry>>.Create([doOwnsValues]);
@@ -314,6 +345,7 @@ begin
       FLearning.Free;
       FApplicationRules.Free;
       FExclusions.Free;
+      FCaseFixKept.Free;
     finally
       FLock.Release;
     end;
@@ -350,6 +382,12 @@ begin
   FCaretHintMode := chTimed;
   FCaretHintFlash := True;
   FCaretHintAnimate := True;
+  FFixInitialCaps := True;
+  FFixCapsLock := True;
+  FPauseInFullscreen := True;
+  FEnglishInSecureFields := True;
+  FDoubleCtrlEnabled := True;
+  FCaseFixKept.Clear;
   FExclusions.Clear;
   FExclusions.Add('cmd.exe');
   FExclusions.Add('powershell.exe');
@@ -510,6 +548,86 @@ procedure TSettings.SetCaretHintFlash(AValue: Boolean);
 begin
   FLock.Acquire;
   try FCaretHintFlash := AValue; finally FLock.Release; end;
+end;
+
+function TSettings.GetFixInitialCaps: Boolean;
+begin
+  FLock.Acquire;
+  try Result := FFixInitialCaps; finally FLock.Release; end;
+end;
+
+procedure TSettings.SetFixInitialCaps(AValue: Boolean);
+begin
+  FLock.Acquire;
+  try FFixInitialCaps := AValue; finally FLock.Release; end;
+end;
+
+function TSettings.GetFixCapsLock: Boolean;
+begin
+  FLock.Acquire;
+  try Result := FFixCapsLock; finally FLock.Release; end;
+end;
+
+procedure TSettings.SetFixCapsLock(AValue: Boolean);
+begin
+  FLock.Acquire;
+  try FFixCapsLock := AValue; finally FLock.Release; end;
+end;
+
+function TSettings.GetPauseInFullscreen: Boolean;
+begin
+  FLock.Acquire;
+  try Result := FPauseInFullscreen; finally FLock.Release; end;
+end;
+
+procedure TSettings.SetPauseInFullscreen(AValue: Boolean);
+begin
+  FLock.Acquire;
+  try FPauseInFullscreen := AValue; finally FLock.Release; end;
+end;
+
+function TSettings.GetEnglishInSecureFields: Boolean;
+begin
+  FLock.Acquire;
+  try Result := FEnglishInSecureFields; finally FLock.Release; end;
+end;
+
+procedure TSettings.SetEnglishInSecureFields(AValue: Boolean);
+begin
+  FLock.Acquire;
+  try FEnglishInSecureFields := AValue; finally FLock.Release; end;
+end;
+
+function TSettings.GetDoubleCtrlEnabled: Boolean;
+begin
+  FLock.Acquire;
+  try Result := FDoubleCtrlEnabled; finally FLock.Release; end;
+end;
+
+procedure TSettings.SetDoubleCtrlEnabled(AValue: Boolean);
+begin
+  FLock.Acquire;
+  try FDoubleCtrlEnabled := AValue; finally FLock.Release; end;
+end;
+
+function TSettings.IsCaseFixKept(const AWord: string): Boolean;
+begin
+  FLock.Acquire;
+  try Result := FCaseFixKept.IndexOf(LowerCase(AWord)) >= 0; finally FLock.Release; end;
+end;
+
+procedure TSettings.KeepCaseFixWord(const AWord: string);
+begin
+  if AWord = '' then
+    Exit;
+  FLock.Acquire;
+  try
+    if (FCaseFixKept.IndexOf(LowerCase(AWord)) < 0) and
+       (FCaseFixKept.Count < MaxCaseFixKept) then
+      FCaseFixKept.Add(LowerCase(AWord));
+  finally
+    FLock.Release;
+  end;
 end;
 
 function TSettings.GetCaretHintAnimate: Boolean;
@@ -686,6 +804,18 @@ begin
       FCaretHintMode := StringToCaretHintMode(TextValue);
     Root.TryGetValue<Boolean>('CaretHintFlash', FCaretHintFlash);
     Root.TryGetValue<Boolean>('CaretHintAnimate', FCaretHintAnimate);
+    Root.TryGetValue<Boolean>('FixInitialCaps', FFixInitialCaps);
+    Root.TryGetValue<Boolean>('FixCapsLock', FFixCapsLock);
+    Root.TryGetValue<Boolean>('PauseInFullscreen', FPauseInFullscreen);
+    Root.TryGetValue<Boolean>('EnglishInSecureFields', FEnglishInSecureFields);
+    Root.TryGetValue<Boolean>('DoubleCtrlEnabled', FDoubleCtrlEnabled);
+
+    ArrayValue := Root.Values['CaseFixKept'] as TJSONArray;
+    if ArrayValue <> nil then
+      for I := 0 to ArrayValue.Count - 1 do
+        if (FCaseFixKept.Count < MaxCaseFixKept) and
+           (FCaseFixKept.IndexOf(LowerCase(ArrayValue.Items[I].Value)) < 0) then
+          FCaseFixKept.Add(LowerCase(ArrayValue.Items[I].Value));
 
     ArrayValue := Root.Values['Exclusions'] as TJSONArray;
     if ArrayValue <> nil then
@@ -854,7 +984,7 @@ procedure TSettings.SaveToFile;
 var
   Root, RulesObject, RuleObject, LearningObject, PreferObject, AppRoot,
     AppObject: TJSONObject;
-  ExclusionsArray: TJSONArray;
+  ExclusionsArray, KeptArray: TJSONArray;
   Rule: TApplicationRule;
   Pair: TPair<string, TLearningEntry>;
   AppPair: TPair<string, TDictionary<string, TLearningEntry>>;
@@ -890,6 +1020,15 @@ begin
     for I := 0 to FExclusions.Count - 1 do
       ExclusionsArray.Add(FExclusions[I]);
     Root.AddPair('Exclusions', ExclusionsArray);
+    Root.AddPair('FixInitialCaps', TJSONBool.Create(FFixInitialCaps));
+    Root.AddPair('FixCapsLock', TJSONBool.Create(FFixCapsLock));
+    Root.AddPair('PauseInFullscreen', TJSONBool.Create(FPauseInFullscreen));
+    Root.AddPair('EnglishInSecureFields', TJSONBool.Create(FEnglishInSecureFields));
+    Root.AddPair('DoubleCtrlEnabled', TJSONBool.Create(FDoubleCtrlEnabled));
+    KeptArray := TJSONArray.Create;
+    for I := 0 to FCaseFixKept.Count - 1 do
+      KeptArray.Add(FCaseFixKept[I]);
+    Root.AddPair('CaseFixKept', KeptArray);
 
     RulesObject := TJSONObject.Create;
     for Rule in FApplicationRules do
@@ -985,6 +1124,9 @@ var
   Name: string;
 begin
   Name := LowerCase(ExtractFileName(AProcessName));
+  for I := Low(AlwaysExcludedProcesses) to High(AlwaysExcludedProcesses) do
+    if Name = AlwaysExcludedProcesses[I] then
+      Exit(True);
   FLock.Acquire;
   try
     for I := 0 to FExclusions.Count - 1 do

@@ -10,6 +10,7 @@ uses
 
 type
   THeuristicMode = (hmCautious, hmBalanced, hmAggressive);
+  TCaseMode = (cmInvert, cmUpper, cmLower, cmCapitalize);
   TDecisionMark = (dmNone, dmLearning, dmDictionary, dmLeave);
   TNeverSwitchCallback = reference to function(const AWord: string): Boolean;
   TPreferSwitchCallback = reference to function(const AWord: string): Boolean;
@@ -45,6 +46,16 @@ function ConvertManualSelection(const AText: string; AMode: THeuristicMode;
 function TryWordAtCaret(const AText: string; ACaret: Integer;
   out AStart, AEnd: Integer): Boolean;
 function InvertLetterCase(const AText: string): string;
+{ cmCapitalize puts the first letter of each sentence in capitals and the
+  rest in lower case. }
+function ApplyCaseMode(const AText: string; AMode: TCaseMode): string;
+{ Line breaks as a single LF, for comparing text read back from an editor. }
+function NormalizeLineBreaks(const AText: string): string;
+{ How many times Left moves the caret across AText: a line break (CRLF, CR
+  or LF) and a surrogate pair each count once. }
+function CaretStepCount(const AText: string): Integer;
+function TryFixInitialCapitals(const AWord: string; out AFixed: string): Boolean;
+function TryFixCapsLockWord(const AWord: string; out AFixed: string): Boolean;
 function NormalizeAnalyzedWord(const AWord: string): string;
 
 implementation
@@ -54,7 +65,6 @@ uses
   Ghbdtn.Heuristics;
 
 const
-  KnownLayoutWordScore = 8;
   SwitchScoreMargin = 4;
   UnknownLayoutMargin = 6;
 
@@ -89,10 +99,6 @@ begin
   Result :=
     ' ' + APrefix + '_ngram=' + IntToStr(AParts.NGrams) +
     ' ' + APrefix + '_dict=' + IntToStr(AParts.Dictionary) +
-    ' ' + APrefix + '_vowel=' + IntToStr(AParts.Vowel) +
-    ' ' + APrefix + '_shape=' + IntToStr(AParts.Shape) +
-    ' ' + APrefix + '_pairs=' + IntToStr(AParts.Pairs) +
-    ' ' + APrefix + '_run=' + IntToStr(AParts.ConsonantRun) +
     ' ' + APrefix + '_total=' + IntToStr(AParts.Total);
 end;
 
@@ -114,6 +120,12 @@ begin
     hmAggressive:
       Dec(Result, 2);
   end;
+end;
+
+function IsDottedExtension(const ALower: string): Boolean;
+begin
+  Result := (Length(ALower) >= 3) and (ALower[1] = '.') and
+    IsFileExtension(Copy(ALower, 2, MaxInt));
 end;
 
 function TypedLayout(const ALower: string; ACurrentLang: TLangKind): TLangKind;
@@ -201,7 +213,7 @@ function AnalyzeWord(const AWord: string; ACurrentLang: TLangKind;
   const APreferSwitch: TPreferSwitchCallback): TAnalysisResult;
 begin
   Result := AnalyzeWord(AWord, ACurrentLang, AMode, ANeverSwitch, APreferSwitch,
-    EmptyPhrase);
+    UntrackedPhrase);
 end;
 
 function AnalyzeWord(const AWord: string; ACurrentLang: TLangKind;
@@ -219,7 +231,6 @@ var
   SourceLayout: TLangKind;
   TypedParts: TScoreParts;
   OtherParts: TScoreParts;
-  KnownKey: Integer;
   OtherLayout: TLangKind;
   Head: string;
 begin
@@ -261,14 +272,23 @@ begin
       QuoteTrace(Result.ConvertedText.ToLower));
     Exit;
   end;
-  if IsShortLayoutWord(LowerWord) and (ACurrentLang <> lkRU) then
+  // A one- or two-letter Russian function word ("и", "не", "на") is too short
+  // to score. Typed after Russian words it is taken as Russian; at the start
+  // of a phrase it stays put, since "vs" or "c" is just as likely English.
+  if (Length(CleanW) <= 2) and (ACurrentLang <> lkRU) and
+     IsCommonRussianWord(ConvertStringSwap(CleanW).ToLower) then
   begin
-    Result.Mark := dmDictionary;
-    Result.NeedsSwitch := True;
-    Result.TargetLang := lkRU;
-    Result.ConvertedText := ConvertStringSwap(AWord);
-    TraceHeuristic(Head + ' reason=short_layout switch=1 target=RU converted=' +
-      QuoteTrace(Result.ConvertedText.ToLower));
+    if APhrase.Untracked or PhraseEndsWith(APhrase, lkRU) then
+    begin
+      Result.Mark := dmDictionary;
+      Result.NeedsSwitch := True;
+      Result.TargetLang := lkRU;
+      Result.ConvertedText := ConvertStringSwap(AWord);
+      TraceHeuristic(Head + ' reason=short_layout switch=1 target=RU converted=' +
+        QuoteTrace(Result.ConvertedText.ToLower));
+    end
+    else
+      TraceHeuristic(Head + ' reason=short_needs_context switch=0');
     Exit;
   end;
   if Length(CleanW) < 2 then
@@ -276,17 +296,26 @@ begin
     TraceHeuristic(Head + ' reason=too_short switch=0');
     Exit;
   end;
+  // "юзва" is ".pdf" typed on the Russian layout. A file extension has no
+  // vowels or n-grams to score, so it is recognized from the list.
+  if (ACurrentLang <> lkEN) and IsDottedExtension(ConvertStringSwap(CleanW).ToLower) then
+  begin
+    Result.Mark := dmDictionary;
+    Result.NeedsSwitch := True;
+    Result.TargetLang := lkEN;
+    Result.ConvertedText := ConvertStringSwap(AWord);
+    TraceHeuristic(Head + ' reason=file_extension switch=1 target=EN converted=' +
+      QuoteTrace(Result.ConvertedText.ToLower));
+    Exit;
+  end;
 
   Converted := ConvertStringSwap(AWord);
   LowerConverted := ConvertStringSwap(CleanW).ToLower;
   SourceLayout := TypedLayout(LowerWord, ACurrentLang);
-  KnownKey := 0;
   if SourceLayout = lkEN then
   begin
     TypedParts := ExplainEnglish(LowerWord);
     OtherParts := ExplainRussian(LowerConverted);
-    if IsKnownEnToRuKey(LowerWord) then
-      KnownKey := KnownLayoutWordScore;
   end
   else
   begin
@@ -297,8 +326,15 @@ begin
     OtherLayout := lkRU
   else
     OtherLayout := lkEN;
+  // A word of the other layout needs a vowel; without one the converted text
+  // is an abbreviation typed as it is (pdf, ltd), not a word typed wrongly.
+  if (Length(LowerConverted) >= 3) and not HasVowel(LowerConverted, OtherLayout) then
+  begin
+    TraceHeuristic(Head + ' reason=no_vowel switch=0');
+    Exit;
+  end;
   OriginalScore := TypedParts.Total + PhraseScoreBias(APhrase, SourceLayout);
-  ConvertedScore := OtherParts.Total + KnownKey +
+  ConvertedScore := OtherParts.Total +
     PhraseScoreBias(APhrase, OtherLayout);
   Margin := SwitchMargin(AMode, ACurrentLang <> lkUnknown);
   if SourceLayout = lkEN then
@@ -313,12 +349,11 @@ begin
   begin
     Result.NeedsSwitch := True;
     Result.ConvertedText := Converted;
-    if (KnownKey > 0) or (OtherParts.Dictionary > 0) then
+    if OtherParts.Dictionary > 0 then
       Result.Mark := dmDictionary;
   end;
   TraceHeuristic(Head + ' reason=score typed=' + LayoutToken(SourceLayout) +
     ' other=' + QuoteTrace(LowerConverted) +
-    ' known_key=' + IntToStr(KnownKey) +
     ' phrase=' + IntToStr(PhraseScoreBias(APhrase, OtherLayout) -
       PhraseScoreBias(APhrase, SourceLayout)) +
     ' margin=' + IntToStr(Margin) +
@@ -530,6 +565,136 @@ begin
     Inc(Pos);
   AEnd := Pos - 1;
   Result := AEnd > AStart;
+end;
+
+function NormalizeLineBreaks(const AText: string): string;
+begin
+  Result := AText.Replace(#13#10, #10).Replace(#13, #10);
+end;
+
+function CaretStepCount(const AText: string): Integer;
+var
+  I: Integer;
+begin
+  Result := 0;
+  I := 1;
+  while I <= Length(AText) do
+  begin
+    if (AText[I] = #13) and (I < Length(AText)) and (AText[I + 1] = #10) then
+      Inc(I)
+    else if AText[I].IsHighSurrogate and (I < Length(AText)) and
+            AText[I + 1].IsLowSurrogate then
+      Inc(I);
+    Inc(Result);
+    Inc(I);
+  end;
+end;
+
+function TryFixInitialCapitals(const AWord: string; out AFixed: string): Boolean;
+var
+  I: Integer;
+  C: Char;
+  Latin, Cyrillic: Boolean;
+begin
+  AFixed := AWord;
+  Result := False;
+  // "ТОлько": two capitals followed only by lowercase letters. A longer run
+  // of capitals or a later capital is an acronym or a CamelCase name.
+  if Length(AWord) < 4 then
+    Exit;
+  Latin := False;
+  Cyrillic := False;
+  for I := 1 to Length(AWord) do
+  begin
+    C := AWord[I];
+    if CharInSet(C, ['a'..'z', 'A'..'Z']) then
+      Latin := True
+    else if ((C >= 'А') and (C <= 'я')) or (C = 'Ё') or (C = 'ё') then
+      Cyrillic := True
+    else
+      Exit;
+    if (I <= 2) and not C.IsUpper then
+      Exit;
+    if (I > 2) and not C.IsLower then
+      Exit;
+  end;
+  if Latin = Cyrillic then
+    Exit;
+  AFixed := AWord[1] + AWord.Substring(1).ToLower;
+  // Latin identifiers such as TForm or IUnknown have the same shape, so
+  // Latin words are corrected only when they are common English words.
+  if Latin and not IsCommonEnglishWord(AFixed.ToLower) then
+  begin
+    AFixed := AWord;
+    Exit;
+  end;
+  Result := True;
+end;
+
+function TryFixCapsLockWord(const AWord: string; out AFixed: string): Boolean;
+var
+  I: Integer;
+  C: Char;
+  Latin, Cyrillic: Boolean;
+begin
+  AFixed := AWord;
+  Result := False;
+  // "пРИВЕТ": a lowercase first letter followed only by capitals is what a
+  // word typed with Caps Lock on looks like when the first letter was shifted.
+  if Length(AWord) < 4 then
+    Exit;
+  Latin := False;
+  Cyrillic := False;
+  for I := 1 to Length(AWord) do
+  begin
+    C := AWord[I];
+    if CharInSet(C, ['a'..'z', 'A'..'Z']) then
+      Latin := True
+    else if ((C >= 'А') and (C <= 'я')) or (C = 'Ё') or (C = 'ё') then
+      Cyrillic := True
+    else
+      Exit;
+    if (I = 1) and not C.IsLower then
+      Exit;
+    if (I > 1) and not C.IsUpper then
+      Exit;
+  end;
+  if Latin = Cyrillic then
+    Exit;
+  AFixed := AWord[1].ToUpper + AWord.Substring(1).ToLower;
+  Result := True;
+end;
+
+function ApplyCaseMode(const AText: string; AMode: TCaseMode): string;
+var
+  I: Integer;
+  C: Char;
+  SentenceStart: Boolean;
+begin
+  case AMode of
+    cmUpper:
+      Exit(AText.ToUpper);
+    cmLower:
+      Exit(AText.ToLower);
+    cmInvert:
+      Exit(InvertLetterCase(AText));
+  end;
+  Result := AText;
+  SentenceStart := True;
+  for I := 1 to Length(Result) do
+  begin
+    C := Result[I];
+    if C.IsLetter then
+    begin
+      if SentenceStart then
+        Result[I] := C.ToUpper
+      else
+        Result[I] := C.ToLower;
+      SentenceStart := False;
+    end
+    else if CharInSet(C, ['.', '!', '?', #10, #13]) then
+      SentenceStart := True;
+  end;
 end;
 
 function InvertLetterCase(const AText: string): string;

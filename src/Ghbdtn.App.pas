@@ -19,6 +19,7 @@ uses
   Ghbdtn.Sound,
   Ghbdtn.AutoStart,
   Ghbdtn.CaretHint,
+  Ghbdtn.Translit,
   Ghbdtn.SettingsForm,
   Ghbdtn.Hook{$IFDEF GHBDTN_UPDATE},
   Ghbdtn.Update{$ENDIF};
@@ -57,10 +58,25 @@ type
     FMnuExit: TMenuItem;
     FMnuSettings: TMenuItem;
     FMnuPause: TMenuItem;
+    FMnuCase: TMenuItem;
+    FMnuTranslit: TMenuItem;
+    FMnuPauseFor: TMenuItem;
+    FBaseHint: string;
+    FShownPause: Integer;
+    FTrayLang: TLangKind;
+    FTrayPaused: Boolean;
 
     procedure CreateComponents;
     procedure CreateTrayMenu;
     function AddMenuItem(const ACaption: string; AOnClick: TNotifyEvent): TMenuItem;
+    procedure AddCaseItem(const ACaption: string; AMode: TCaseMode);
+    procedure AddPauseItem(const ACaption: string; AMinutes: Integer);
+    procedure mnuPauseForClick(Sender: TObject);
+    procedure RefreshPauseIndicators;
+    procedure mnuCaseClick(Sender: TObject);
+    procedure AddTranslitItem(const ACaption: string;
+      ADirection: TTranslitDirection);
+    procedure mnuTranslitClick(Sender: TObject);
     procedure SaveSettings;
     procedure OnLangChanged(ALang: TLangKind);
     procedure OnTimerTick(Sender: TObject);
@@ -173,6 +189,98 @@ begin
   FPopupMenu.Items.Add(Result);
 end;
 
+procedure TfrmApp.AddCaseItem(const ACaption: string; AMode: TCaseMode);
+var
+  Item: TMenuItem;
+begin
+  Item := TMenuItem.Create(FPopupMenu);
+  Item.Caption := ACaption;
+  Item.Tag := Ord(AMode);
+  Item.OnClick := mnuCaseClick;
+  FMnuCase.Add(Item);
+end;
+
+procedure TfrmApp.mnuCaseClick(Sender: TObject);
+begin
+  if HookManager <> nil then
+    HookManager.RunCaseCommand(TCaseMode(TMenuItem(Sender).Tag));
+end;
+
+procedure TfrmApp.AddPauseItem(const ACaption: string; AMinutes: Integer);
+var
+  Item: TMenuItem;
+begin
+  Item := TMenuItem.Create(FPopupMenu);
+  Item.Caption := ACaption;
+  Item.Tag := AMinutes;
+  Item.OnClick := mnuPauseForClick;
+  FMnuPauseFor.Add(Item);
+end;
+
+procedure TfrmApp.mnuPauseForClick(Sender: TObject);
+begin
+  if HookManager <> nil then
+    HookManager.PauseForMinutes(TMenuItem(Sender).Tag);
+  RefreshPauseIndicators;
+  UpdateMenuItems;
+end;
+
+{ The menu item and the tray tooltip show how long a timed pause still lasts. }
+procedure TfrmApp.RefreshPauseIndicators;
+var
+  Remaining: Integer;
+  Suffix: string;
+begin
+  if HookManager = nil then
+    Exit;
+  Remaining := HookManager.PauseMinutesRemaining;
+  if Remaining = FShownPause then
+    Exit;
+  FShownPause := Remaining;
+  if (Remaining <> 0) <> FTrayPaused then
+  begin
+    FTrayPaused := Remaining <> 0;
+    if FBaseHint <> '' then
+    begin
+      UpdateTrayIconLang(FTrayIcon, FTrayLang, FTrayPaused);
+      FBaseHint := FTrayIcon.Hint;
+    end;
+  end;
+  if Remaining > 0 then
+    Suffix := ' - пауза, осталось ' + IntToStr(Remaining) + ' мин'
+  else if Remaining < 0 then
+    Suffix := ' - пауза'
+  else
+    Suffix := '';
+  if FBaseHint <> '' then
+    FTrayIcon.Hint := FBaseHint + Suffix;
+  if FMnuPause <> nil then
+  begin
+    if Remaining > 0 then
+      FMnuPause.Caption := 'Пауза (осталось ' + IntToStr(Remaining) + ' мин)'
+    else
+      FMnuPause.Caption := 'Пауза';
+  end;
+end;
+
+procedure TfrmApp.AddTranslitItem(const ACaption: string;
+  ADirection: TTranslitDirection);
+var
+  Item: TMenuItem;
+begin
+  Item := TMenuItem.Create(FPopupMenu);
+  Item.Caption := ACaption;
+  Item.Tag := Ord(ADirection);
+  Item.OnClick := mnuTranslitClick;
+  FMnuTranslit.Add(Item);
+end;
+
+procedure TfrmApp.mnuTranslitClick(Sender: TObject);
+begin
+  if HookManager <> nil then
+    HookManager.RunTranslitCommand(TTranslitDirection(TMenuItem(Sender).Tag));
+end;
+
 procedure TfrmApp.SaveSettings;
 begin
   AppSettings.SaveToFile;
@@ -184,6 +292,7 @@ begin
   try
     if HookManager <> nil then
       HookManager.CheckLangChange;
+    RefreshPauseIndicators;
   except
     on E: Exception do
       LogDiagnostic(dlError, deTimerFailure, E.HelpContext);
@@ -196,6 +305,18 @@ begin
 
   FMnuSettings := AddMenuItem('Настройки', mnuSettingsClick);
   FMnuPause := AddMenuItem('Пауза', mnuPauseClick);
+  FMnuPauseFor := AddMenuItem('Пауза на время', nil);
+  AddPauseItem('На 30 минут', 30);
+  AddPauseItem('На 1 час', 60);
+  AddPauseItem('До перезапуска', 0);
+  FMnuCase := AddMenuItem('Регистр выделения или слова', nil);
+  AddCaseItem('ВЕРХНИЙ РЕГИСТР', cmUpper);
+  AddCaseItem('нижний регистр', cmLower);
+  AddCaseItem('Первая заглавная', cmCapitalize);
+  AddCaseItem('иНВЕРСИЯ РЕГИСТРА', cmInvert);
+  FMnuTranslit := AddMenuItem('Транслит выделения или слова', nil);
+  AddTranslitItem('В транслит (привет -> privet)', tdToLatin);
+  AddTranslitItem('Из транслита (privet -> привет)', tdToCyrillic);
   AddMenuItem('-', nil);
   FMnuAutoSwitch := AddMenuItem('Автопереключение', mnuAutoSwitchClick);
   FMnuSoundRU := AddMenuItem('Звук при вводе в RU', mnuSoundRUClick);
@@ -249,7 +370,11 @@ end;
 procedure TfrmApp.OnLangChanged(ALang: TLangKind);
 begin
   try
-    UpdateTrayIconLang(FTrayIcon, ALang);
+    FTrayLang := ALang;
+    UpdateTrayIconLang(FTrayIcon, ALang, FTrayPaused);
+    FBaseHint := FTrayIcon.Hint;
+    FShownPause := -2;
+    RefreshPauseIndicators;
     if FCaretHintArmed then
       ShowCaretHint(ALang)
     else

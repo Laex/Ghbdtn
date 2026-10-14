@@ -57,6 +57,7 @@
     </DelphiCompile>
     <DCCReference Include="Ghbdtn.Tests.Core.pas"/>
     <DCCReference Include="..\src\Ghbdtn.Layout.pas"/>
+    <DCCReference Include="..\src\Ghbdtn.LetterModel.pas"/>
     <DCCReference Include="..\src\Ghbdtn.Heuristics.pas"/>
     <DCCReference Include="..\src\Ghbdtn.Analyzer.pas"/>
     <DCCReference Include="..\src\Ghbdtn.Buffer.pas"/>
@@ -64,6 +65,11 @@
     <DCCReference Include="..\src\Ghbdtn.Learning.pas"/>
     <DCCReference Include="..\src\Ghbdtn.Phrase.pas"/>
     <DCCReference Include="..\src\Ghbdtn.Settings.pas"/>
+    <DCCReference Include="..\src\Ghbdtn.Clipboard.pas"/>
+    <DCCReference Include="..\src\Ghbdtn.Colors.pas"/>
+    <DCCReference Include="..\src\Ghbdtn.Fullscreen.pas"/>
+    <DCCReference Include="..\src\Ghbdtn.Translit.pas"/>
+    <DCCReference Include="..\src\Ghbdtn.FieldWatch.pas"/>
     <DCCReference Include="..\src\Ghbdtn.InputQueue.pas"/>
     <DCCReference Include="..\src\Ghbdtn.Fixer.pas"/>
     <DCCReference Include="..\src\Ghbdtn.Diagnostics.pas"/>

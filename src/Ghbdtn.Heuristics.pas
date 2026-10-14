@@ -2,132 +2,60 @@ unit Ghbdtn.Heuristics;
 
 interface
 
-function IsKnownEnToRuKey(const ALower: string): Boolean;
-function IsShortLayoutWord(const ALower: string): Boolean;
+uses
+  Ghbdtn.Layout;
+
+function IsCommonRussianWord(const S: string): Boolean;
+function IsCommonEnglishWord(const S: string): Boolean;
+function IsFileExtension(const ALower: string): Boolean;
+
+{ Whether a lowercase word has a vowel of the language; a word without one
+  is an abbreviation or noise, not a word of that language. }
+function HasVowel(const ALower: string; ALang: TLangKind): Boolean;
 
 type
   TScoreParts = record
     Total: Integer;
     NGrams: Integer;
     Dictionary: Integer;
-    Vowel: Integer;
-    Shape: Integer;
-    Pairs: Integer;
-    ConsonantRun: Integer;
   end;
 
 function ExplainEnglish(const ALower: string): TScoreParts;
 function ExplainRussian(const ALower: string): TScoreParts;
-function ScoreEnglish(const ALower: string): Integer;
-function ScoreRussian(const ALower: string): Integer;
 
 implementation
 
 uses
   System.SysUtils,
   System.Generics.Collections,
-  System.Generics.Defaults;
+  System.Generics.Defaults,
+  Ghbdtn.LetterModel;
 
 const
   RuVowels = 'аеёиоуыэюяАЕЁИОУЫЭЮЯ';
-  RuConsonants = 'бвгджзйклмнпрстфхцчшщБВГДЖЗЙКЛМНПРСТФХЦЧШЩ';
 
-  InvalidRuPairs: array[0..40] of string = (
-    'ьь', 'ъъ', 'ыы', 'ьъ', 'ъь', 'ьы', 'ыь', 'ъа', 'ъо', 'ъе', 'ъи', 'ъя', 'ъу', 'ъы', 'ъэ',
-    'ьв', 'ьз', 'ьд', 'ьк', 'ьт', 'ьс', 'ьр', 'ьн', 'ьп', 'ьг', 'ьу', 'ьщ', 'ьч', 'ьф', 'ьб',
-    'цщ', 'щд', 'щк', 'щз', 'щц', 'щг', 'щп', 'щс', 'щт', 'щб', 'щв'
+  CommonFileExtensions: array[0..61] of string = (
+    'pdf', 'doc', 'docx', 'xls', 'xlsx', 'ppt', 'pptx', 'txt', 'rtf', 'csv',
+    'json', 'xml', 'html', 'htm', 'css', 'js', 'zip', 'rar', 'exe', 'dll',
+    'msi', 'bat', 'cmd', 'png', 'jpg', 'jpeg', 'gif', 'bmp', 'svg', 'ico',
+    'mp3', 'mp4', 'avi', 'mkv', 'wav', 'iso', 'log', 'ini', 'cfg', 'md',
+    'py', 'pas', 'dfm', 'dpr', 'dproj', 'cpp', 'java', 'sql', 'bak', 'tmp',
+    'lnk', 'odt', 'ods', 'tar', 'gz', 'yml', 'yaml', 'toml', 'sh', 'ps',
+    'rs', 'go'
   );
 
-  CommonEnToRuKeys: array[0..49] of string = (
-    'ghbdtn',    // привет
-    'rfr',       // как
-    'ltkf',      // дела
-    'ltkjl',     // делал
-    'xnj',       // что
-    'jxtym',     // очень
-    'vyt',       // мне
-    'ntot',      // тебе
-    'vtyz',      // меня
-    'ntyz',      // тебя
-    'rjs',       // кто
-    'utl',       // где
-    'rjulf',     // когда
-    'pfxtv',     // зачем
-    'gjxtve',    // почему
-    'nfr',       // так
-    'nj-ybfeym', // то-нибудь
-    'xnj-nj',    // что-то
-    'rfr-nj',    // как-то
-    'rjve',      // кому
-    'lhuh',      // друг
-    'lzym',      // день
-    'ljfhj',     // добро
-    'xtkjdtr',   // человек
-    'pyftn',     // знает
-    'pyfxbn',    // значит
-    'vj;tn',     // может
-    'vj;ys',     // можно
-    'ytn',       // нет
-    'tckb',      // если
-    'njkmrj',    // только
-    'vjyuj',     // много
-    'ghjcnj',    // просто
-    'lhujq',     // другой
-    'yjdsq',     // новый
-    'jlby',      // один
-    'geyrn',     // пункт
-    'ntrcn',     // текст
-    'ckjdj',     // слово
-    'cnhjrf',    // строка
-    'yf,jh',     // набор
-    'gjckt',     // после
-    'ctqxpc',    // сейчас
-    'heccrbq',   // русский
-    'fyukbqcrbq',// английский
-    'cgfcb,j',   // спасибо
-    'lkz',       // для
-    'xbnftncz',  // читается
-    'xj',        // чо
-    'x`'         // чё
-  );
-
-  { Russian function words typed as a whole token on the English layout. }
-  ShortEnToRuKeys: array[0..23] of string = (
-    'b',   // и
-    'j',   // о
-    'd',   // в
-    'r',   // к
-    'c',   // с
-    'z',   // я
-    'f',   // а
-    'e',   // у
-    'yt',  // не
-    'gj',  // по
-    'yf',  // на
-    'pf',  // за
-    'jn',  // от
-    'lj',  // до
-    'bp',  // из
-    'ye',  // ну
-    'kb',  // ли
-    'nj',  // то
-    'yj',  // но
-    'jy',  // он
-    'vs',  // мы
-    'ds',  // вы
-    'ns',  // ты
-    'xt'   // че
-  );
-
-  { Everyday Russian words. A word is omitted when its English-layout
-    spelling is itself a common English word. }
+  { Everyday Russian words, including the one- and two-letter function words.
+    A word is omitted when its English-layout spelling is itself a common
+    English word. }
   CommonRuWords: array of string = [
     'привет', 'как', 'дела', 'что', 'очень', 'мне', 'тебе', 'меня', 'тебя',
     'кто', 'где', 'когда', 'зачем', 'почему', 'так', 'кому', 'друг', 'день',
     'добро', 'человек', 'знает', 'значит', 'может', 'можно', 'нет', 'если',
     'только', 'много', 'просто', 'другой', 'новый', 'один', 'пункт', 'текст',
     'слово', 'строка', 'набор', 'после', 'сейчас', 'русский', 'английский',
-    'спасибо', 'это', 'для', 'читается',
+    'спасибо', 'это', 'для', 'читается', 'что-то', 'как-то', 'чо', 'чё',
+    'и', 'о', 'в', 'к', 'с', 'я', 'а', 'у', 'не', 'по', 'на', 'за', 'от', 'до',
+    'из', 'ну', 'ли', 'то', 'но', 'ты', 'че',
     'он', 'она', 'мы', 'вы', 'они', 'мой', 'моя', 'мое', 'моё', 'твой', 'наш',
     'ваш', 'его', 'ее', 'её', 'их', 'нас', 'вас', 'этот', 'эта', 'эти', 'того',
     'тут', 'там', 'здесь', 'туда', 'сюда', 'уже', 'еще', 'ещё', 'тоже',
@@ -180,38 +108,12 @@ const
     'am', 'been', 'being', 'has', 'had', 'did', 'does'
   );
 
-  CommonEnBigrams =
-    '|th|he|in|er|an|re|on|at|en|nd|ti|es|or|te|of|ed|is|it|al|ar|' +
-    'st|to|nt|ng|se|ha|as|ou|io|le|ve|co|me|de|hi|ri|ro|ic|ne|ea|' +
-    'ra|ce|li|ch|ll|be|ma|si|om|ur|';
-  CommonEnTrigrams =
-    '|the|and|ing|ion|tio|ent|ere|her|for|tha|nth|int|ter|est|ers|' +
-    'ati|hat|ate|all|eth|hes|ver|his|oft|ith|sth|oth|res|';
-  CommonRuBigrams =
-    '|ст|но|ен|то|на|ов|ни|ра|во|ко|ро|по|пр|не|ос|ло|ре|го|ал|' +
-    'ли|ве|ка|ла|ер|та|ти|ет|де|те|ль|ес|ил|да|ог|ол|ва|че|ми|' +
-    'се|ри|ак|мо|ит|ив|ел|од|ди|ин|пу|ун|нк|кт|ек|кс|ов|';
-  CommonRuTrigrams =
-    '|про|ост|ени|ого|ать|ста|тор|ова|ние|ено|при|ств|что|это|как|' +
-    'дел|вет|рив|енн|кот|оль|ной|его|ива|один|пун|ункт|тек|';
-
   DictionaryScore = 10;
-  VowelScore = 2;
-  InvalidStartPenalty = 4;
-  InvalidPairPenalty = 4;
-  ConsonantRunPenalty = 3;
-  NoEnglishShapePenalty = 2;
 
 var
-  GEnToRuKeys: TArray<string>;
-  GShortEnToRuKeys: TArray<string>;
+  GFileExtensions: TArray<string>;
   GEnglishWords: TArray<string>;
   GRussianWords: TArray<string>;
-  GEnglishBigrams: TArray<string>;
-  GEnglishTrigrams: TArray<string>;
-  GRussianBigrams: TArray<string>;
-  GRussianTrigrams: TArray<string>;
-  GInvalidRuPairs: TArray<string>;
 
 function StringOrder(const Left, Right: string): Integer;
 begin
@@ -236,27 +138,6 @@ begin
       Inc(N);
     end;
   SetLength(Result, N);
-end;
-
-function SortPackedNGrams(const APacked: string): TArray<string>;
-var
-  Parts: TArray<string>;
-  I, N: Integer;
-begin
-  Parts := APacked.Split(['|']);
-  N := 0;
-  for I := 0 to High(Parts) do
-    if Parts[I] <> '' then
-      Inc(N);
-  SetLength(Result, N);
-  N := 0;
-  for I := 0 to High(Parts) do
-    if Parts[I] <> '' then
-    begin
-      Result[N] := Parts[I];
-      Inc(N);
-    end;
-  Result := SortUnique(Result);
 end;
 
 function ContainsSorted(const AItems: TArray<string>; const AValue: string): Boolean;
@@ -284,67 +165,9 @@ begin
   Result := Pos(C, RuVowels) > 0;
 end;
 
-function IsConsonantRU(C: Char): Boolean;
+function IsFileExtension(const ALower: string): Boolean;
 begin
-  Result := Pos(C, RuConsonants) > 0;
-end;
-
-function HasConsecutiveConsonantsRU(const S: string; MaxCount: Integer): Boolean;
-var
-  I, Count: Integer;
-begin
-  Count := 0;
-  for I := 1 to Length(S) do
-  begin
-    if IsConsonantRU(S[I]) then
-    begin
-      Inc(Count);
-      if Count >= MaxCount then
-        Exit(True);
-    end
-    else
-      Count := 0;
-  end;
-  Result := False;
-end;
-
-function StartsWithInvalidRU(const S: string): Boolean;
-var
-  FirstChar: Char;
-begin
-  if S = '' then
-    Exit(False);
-  FirstChar := S[1];
-  Result := (FirstChar = 'ь') or (FirstChar = 'Ь') or
-            (FirstChar = 'ъ') or (FirstChar = 'Ъ') or
-            (FirstChar = 'ы') or (FirstChar = 'Ы');
-end;
-
-function HasInvalidRuPairs(const S: string): Boolean;
-var
-  I: Integer;
-  LowerS: string;
-begin
-  LowerS := S.ToLower;
-  for I := 1 to Length(LowerS) - 1 do
-    if ContainsSorted(GInvalidRuPairs, Copy(LowerS, I, 2)) then
-      Exit(True);
-  Result := False;
-end;
-
-function IsKnownEnToRuKey(const ALower: string): Boolean;
-begin
-  Result := ContainsSorted(GEnToRuKeys, ALower);
-end;
-
-function IsShortLayoutWord(const ALower: string): Boolean;
-begin
-  Result := ContainsSorted(GShortEnToRuKeys, ALower);
-end;
-
-function IsCommonEnglishWord(const S: string): Boolean;
-begin
-  Result := ContainsSorted(GEnglishWords, S);
+  Result := ContainsSorted(GFileExtensions, ALower);
 end;
 
 function IsCommonRussianWord(const S: string): Boolean;
@@ -352,28 +175,9 @@ begin
   Result := ContainsSorted(GRussianWords, S);
 end;
 
-function HasStrongEnglishVowel(const S: string): Boolean;
-var
-  I: Integer;
+function IsCommonEnglishWord(const S: string): Boolean;
 begin
-  for I := 1 to Length(S) do
-    if CharInSet(S[I], ['a', 'e', 'i', 'o', 'u']) then
-      Exit(True);
-  Result := False;
-end;
-
-function ScoreNGrams(const S: string;
-  const ABigrams, ATrigrams: TArray<string>): Integer;
-var
-  I: Integer;
-begin
-  Result := 0;
-  for I := 1 to Length(S) - 1 do
-    if ContainsSorted(ABigrams, Copy(S, I, 2)) then
-      Inc(Result);
-  for I := 1 to Length(S) - 2 do
-    if ContainsSorted(ATrigrams, Copy(S, I, 3)) then
-      Inc(Result, 2);
+  Result := ContainsSorted(GEnglishWords, S);
 end;
 
 function HasEnglishVowel(const S: string): Boolean;
@@ -396,83 +200,35 @@ begin
   Result := False;
 end;
 
-function HasConsecutiveConsonantsEN(const S: string; MaxCount: Integer): Boolean;
-var
-  I, Count: Integer;
-begin
-  Count := 0;
-  for I := 1 to Length(S) do
-  begin
-    if CharInSet(S[I], ['a'..'z']) and
-       not CharInSet(S[I], ['a', 'e', 'i', 'o', 'u', 'y']) then
-    begin
-      Inc(Count);
-      if Count >= MaxCount then
-        Exit(True);
-    end
-    else
-      Count := 0;
-  end;
-  Result := False;
-end;
-
 function ExplainEnglish(const ALower: string): TScoreParts;
 begin
   Result := Default(TScoreParts);
-  Result.NGrams := ScoreNGrams(ALower, GEnglishBigrams, GEnglishTrigrams);
+  Result.NGrams := LetterModelScore(ALower, lkEN);
   if IsCommonEnglishWord(ALower) then
     Result.Dictionary := DictionaryScore;
-  // 'y' alone is a weak English signal - Russian 'н' is typed as Y.
-  if HasStrongEnglishVowel(ALower) then
-    Result.Vowel := VowelScore
-  else if HasEnglishVowel(ALower) and (Result.NGrams > 0) then
-    Result.Vowel := 1;
-  if (Result.NGrams = 0) and (Length(ALower) >= 4) and
-     not IsCommonEnglishWord(ALower) then
-    Result.Shape := -NoEnglishShapePenalty;
-  if HasConsecutiveConsonantsEN(ALower, 4) then
-    Result.ConsonantRun := -ConsonantRunPenalty;
-  Result.Total := Result.NGrams + Result.Dictionary + Result.Vowel +
-    Result.Shape + Result.Pairs + Result.ConsonantRun;
+  Result.Total := Result.NGrams + Result.Dictionary;
 end;
 
 function ExplainRussian(const ALower: string): TScoreParts;
 begin
   Result := Default(TScoreParts);
-  Result.NGrams := ScoreNGrams(ALower, GRussianBigrams, GRussianTrigrams);
+  Result.NGrams := LetterModelScore(ALower, lkRU);
   if IsCommonRussianWord(ALower) then
     Result.Dictionary := DictionaryScore;
-  if HasRussianVowel(ALower) then
-    Result.Vowel := VowelScore;
-  if StartsWithInvalidRU(ALower) then
-    Result.Shape := -InvalidStartPenalty;
-  if HasInvalidRuPairs(ALower) then
-    Result.Pairs := -InvalidPairPenalty;
-  if HasConsecutiveConsonantsRU(ALower, 4) then
-    Result.ConsonantRun := -ConsonantRunPenalty;
-  Result.Total := Result.NGrams + Result.Dictionary + Result.Vowel +
-    Result.Shape + Result.Pairs + Result.ConsonantRun;
+  Result.Total := Result.NGrams + Result.Dictionary;
 end;
 
-function ScoreEnglish(const ALower: string): Integer;
+function HasVowel(const ALower: string; ALang: TLangKind): Boolean;
 begin
-  Result := ExplainEnglish(ALower).Total;
-end;
-
-function ScoreRussian(const ALower: string): Integer;
-begin
-  Result := ExplainRussian(ALower).Total;
+  if ALang = lkEN then
+    Result := HasEnglishVowel(ALower)
+  else
+    Result := HasRussianVowel(ALower);
 end;
 
 initialization
-  GEnToRuKeys := SortUnique(CommonEnToRuKeys);
-  GShortEnToRuKeys := SortUnique(ShortEnToRuKeys);
+  GFileExtensions := SortUnique(CommonFileExtensions);
   GEnglishWords := SortUnique(CommonEnWords);
   GRussianWords := SortUnique(CommonRuWords);
-  GEnglishBigrams := SortPackedNGrams(CommonEnBigrams);
-  GEnglishTrigrams := SortPackedNGrams(CommonEnTrigrams);
-  GRussianBigrams := SortPackedNGrams(CommonRuBigrams);
-  GRussianTrigrams := SortPackedNGrams(CommonRuTrigrams);
-  GInvalidRuPairs := SortUnique(InvalidRuPairs);
 
 end.

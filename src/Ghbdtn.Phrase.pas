@@ -13,9 +13,15 @@ type
   TPhraseContext = record
     Languages: array[0..PhraseWindow - 1] of TLangKind;
     Count: Integer;
+    // True when the words before the current one are not tracked at all,
+    // as for a selection converted by hand.
+    Untracked: Boolean;
   end;
 
 function EmptyPhrase: TPhraseContext;
+function UntrackedPhrase: TPhraseContext;
+function PhraseEndsWith(const AContext: TPhraseContext;
+  ALang: TLangKind): Boolean;
 function ContainsPhraseLetter(const AText: string): Boolean;
 procedure RememberPhraseLanguage(var AContext: TPhraseContext; ALang: TLangKind);
 function PhraseScoreBias(const AContext: TPhraseContext; ALang: TLangKind): Integer;
@@ -28,6 +34,19 @@ uses
 function EmptyPhrase: TPhraseContext;
 begin
   Result := Default(TPhraseContext);
+end;
+
+function UntrackedPhrase: TPhraseContext;
+begin
+  Result := Default(TPhraseContext);
+  Result.Untracked := True;
+end;
+
+function PhraseEndsWith(const AContext: TPhraseContext;
+  ALang: TLangKind): Boolean;
+begin
+  Result := (AContext.Count > 0) and
+    (AContext.Languages[AContext.Count - 1] = ALang);
 end;
 
 function ContainsPhraseLetter(const AText: string): Boolean;

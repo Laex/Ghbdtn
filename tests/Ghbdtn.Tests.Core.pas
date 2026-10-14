@@ -12,6 +12,11 @@ uses
   Ghbdtn.Layout,
   Ghbdtn.Analyzer,
   Ghbdtn.Buffer,
+  Ghbdtn.Clipboard,
+  Ghbdtn.Colors,
+  Ghbdtn.FieldWatch,
+  Ghbdtn.Fullscreen,
+  Ghbdtn.Translit,
   Ghbdtn.KeyState,
   Ghbdtn.Learning,
   Ghbdtn.Phrase,
@@ -59,6 +64,22 @@ type
   end;
 
   [TestFixture]
+  TDetectionTests = class
+  private
+    procedure CountDetections(const AWords: string; AWrongLayout: Boolean;
+      ALayout: TLangKind; out AFlagged, ATotal: Integer);
+  public
+    [Test]
+    procedure DetectsMostRussianWordsTypedInEnglish;
+    [Test]
+    procedure DetectsMostEnglishWordsTypedInRussian;
+    [Test]
+    procedure KeepsRussianWordsTypedInRussian;
+    [Test]
+    procedure KeepsEnglishWordsTypedInEnglish;
+  end;
+
+  [TestFixture]
   TAnalyzerTests = class
   public
     [Test]
@@ -78,6 +99,8 @@ type
     [Test]
     procedure FrequentRussianWordTypedInEnglishSwitches;
     [Test]
+    procedure ShortWordNeedsRussianWordsBeforeIt;
+    [Test]
     procedure RussianContextSwitchesANearMiss;
     [Test]
     procedure EnglishContextKeepsABorderlineWord;
@@ -95,6 +118,16 @@ type
     procedure WordAtCaretReadsTheWordUnderTheCaret;
     [Test]
     procedure InvertsEachLetterCase;
+    [Test]
+    procedure AppliesCaseModes;
+    [Test]
+    procedure FixesTwoInitialCapitalsOnly;
+    [Test]
+    procedure CountsCaretStepsAcrossLineBreaks;
+    [Test]
+    procedure FixesWordTypedWithCapsLock;
+    [Test]
+    procedure SwitchesFileExtensionTypedOnRussianLayout;
     [Test]
     procedure ProtectsTechnicalTokensAndAbbreviations;
     [Test]
@@ -133,7 +166,17 @@ type
     [Test]
     procedure SavesAndLoadsAllSettings;
     [Test]
+    procedure PersistsInitialCapsOptions;
+    [Test]
     procedure SupportsWildcardExclusionsAndRules;
+    [Test]
+    procedure AlwaysExcludesPasswordManagers;
+    [Test]
+    procedure RecognizesFullscreenNotificationStates;
+    [Test]
+    procedure DrawsBadgeBorderInADarkerShadeOfTheFill;
+    [Test]
+    procedure RecognizesEmailFieldLabels;
     [Test]
     procedure PersistsLearningAndHeuristicMode;
     [Test]
@@ -178,6 +221,8 @@ type
   TInputQueueTests = class
   public
     [Test]
+    procedure DropsWorkForAnotherControlOrAnOldItem;
+    [Test]
     procedure CapturesReplayOnlyWhilePending;
     [Test]
     procedure PreservesReplayOrder;
@@ -219,6 +264,8 @@ type
     [Test]
     procedure LearningWindowExpires;
     [Test]
+    procedure CountsMinutesLeftOnATimedPause;
+    [Test]
     procedure RejectsOwnAndShellTargets;
     [Test]
     procedure DetectsPasswordControlStyle;
@@ -258,6 +305,32 @@ type
     procedure ThreeMatchingWordsRaiseTheBias;
     [Test]
     procedure WindowDropsTheOldestWord;
+  end;
+
+  [TestFixture]
+  TTranslitTests = class
+  public
+    [Test]
+    procedure ConvertsRussianToLatinLetters;
+    [Test]
+    procedure KeepsCaseOfGroupsAndLineBreaks;
+    [Test]
+    procedure ConvertsLatinToRussianLetters;
+    [Test]
+    procedure RestoresSignsAndLongGroups;
+    [Test]
+    procedure LeavesOtherCharactersAlone;
+  end;
+
+  [TestFixture]
+  TClipboardTests = class
+  public
+    [Test]
+    procedure RestoresEveryCopiedFormat;
+    [Test]
+    procedure RefusesContentThatCannotBeCopied;
+    [Test]
+    procedure SequenceChangesWhenTextIsWritten;
   end;
 
 implementation
@@ -337,6 +410,115 @@ begin
   Assert.AreEqual(':', MapVirtualKeyToChar(VK_OEM_1, True, lkEN));
   Assert.AreEqual(';', MapVirtualKeyToChar(VK_OEM_1, False, lkEN));
   Assert.AreEqual('Ж', MapVirtualKeyToChar(VK_OEM_1, True, lkRU));
+end;
+
+const
+  RussianSample =
+    'года мая так административный церкви европы типа призер рсфср композитор производства ' +
+    'момент первого кроме испании располагается такие воды устье священной создан назван веке ' +
+    'остров дел покровителем районного европейского разновидность средней проходит направлении ' +
+    'местом орган критик музыкант официально марий серия грузинская работой курганской ' +
+    'исторический авиакомпания выступала форма певица политики соль исключением поселе ' +
+    'достаточно регионального положения евгений основы крымской законодательный конструктор ' +
+    'международная достиг сидней космической счетом погибли решением введен должности дэвид ' +
+    'подразделяется польша воду петров марийской достигать справа должна карате автономная ' +
+    'пятый комет компаниями воевода основоположник насекомые нка статья иные завершении ' +
+    'религиозной симон предшественника горного данное руководителем кинорежиссер антон ' +
+    'разведывательного джаната дивизион готов стек известной кабинета красная резня исток ' +
+    'иордании ведущим лучшим автодороги соединяет открытия верхний здравоохранения шоссе уезде ' +
+    'квартале вариантов печени процессы императорской исторически музыкальными оборонительные ' +
+    'путешественник лаборатории коммунистический положительные регистрируют яйском индейские ' +
+    'квартиру нидерландская зарегистрировано символом прочие новогодний лагеря димопулос ' +
+    'обществом уго авиакомпанией первомайском мог заявку устав советскими косвенно император ' +
+    'различаются курская трамп руководителей ресурсов станет звукозаписи сделать амурской ' +
+    'терехта весной смирно дворце сообществом изготовления штутгарт грей представителями ' +
+    'аншлюса кодекс головном ручьевского ролон стокгольме разработчиком кислотность гиг объеме ' +
+    'авиационного катаре профессора администрации столкновения воеводства тский соединений ' +
+    'ашоки сутер начав минске муленберг уильямс расположенной мясо четырехколесное оясио ' +
+    'кавказской израильский сделки повышенной зимбабве учения производстве аббаньяле сегодня ' +
+    'даны величины нико сумской кировского парагвая отдать применяются матрица финансовая ' +
+    'сайдшоу янжмаа копакабана ложек ';
+
+const
+  EnglishSample =
+    'the who data need right technology pictures property point hot blog latest major ' +
+    'president common conference mark jul engineering remember commission pdf rental george ' +
+    'cnet chicago improve involved catalog output longer born itself beginning creative ' +
+    'columbia applied visitors bob sec heat freedom sorted ipod leadership follows russia ' +
+    'mouse brief votes specifications consulting banking samples delivered mentioned comfort ' +
+    'gambling hiv ideal ink explain audience diseases entered controlled visa checks supreme ' +
+    'oxford terminal collected contribution fighting relatively earnings templates pump ' +
+    'hundred duration measured roman lease commissioner principle elected interpretation ' +
+    'purple victims org dad losses targets glad uniform obligation arguments donald motors ' +
+    'clay sons showtimes limitations boundary preparing genes atlas decor temp polyphonic ' +
+    'quantum cleaner knife excerpt oakland arising ssl oem tablet resolve highlight cole ' +
+    'solely monkey separation lotus bow oils diagram discounted verizon lil stuck satisfy ' +
+    'microwave integral tap confused hiring monetary aggregate infected canal volt ons cabin ' +
+    'chances extends edges walks slight behavioral rrp britannica witnesses mere loc monaco ' +
+    'spice prospects lender gba enormous tar voyeurweb jaguar coordinates vacancies aerial ' +
+    'participated titanium cheque entertaining travelling undo wrist shakira assured riders ' +
+    'llp momentum simplified writings remainder urls arbitration tomato tribunal upset ' +
+    'bleeding fridge dictionaries usps dividend somalia airplane creature burst sufficiently ' +
+    'ranger ';
+
+const
+  // Percent of a sample the heuristic must catch when typed in the wrong
+  // layout, and may wrongly touch when typed in the right one.
+  MinRussianDetected = 95;
+  MinEnglishDetected = 95;
+  MaxRussianFalse = 1;
+  MaxEnglishFalse = 1;
+{ TDetectionTests }
+
+procedure TDetectionTests.CountDetections(const AWords: string;
+  AWrongLayout: Boolean; ALayout: TLangKind; out AFlagged, ATotal: Integer);
+var
+  Word, Typed: string;
+begin
+  AFlagged := 0;
+  ATotal := 0;
+  for Word in AWords.Split([' '], TStringSplitOptions.ExcludeEmpty) do
+  begin
+    if AWrongLayout then
+      Typed := ConvertStringSwap(Word)
+    else
+      Typed := Word;
+    Inc(ATotal);
+    if AnalyzeWord(Typed, ALayout, hmBalanced, nil).NeedsSwitch then
+      Inc(AFlagged);
+  end;
+end;
+
+procedure TDetectionTests.DetectsMostRussianWordsTypedInEnglish;
+var
+  Flagged, Total: Integer;
+begin
+  CountDetections(RussianSample, True, lkEN, Flagged, Total);
+  Assert.IsTrue(Flagged * 100 >= Total * MinRussianDetected, Format('%d of %d', [Flagged, Total]));
+end;
+
+procedure TDetectionTests.DetectsMostEnglishWordsTypedInRussian;
+var
+  Flagged, Total: Integer;
+begin
+  CountDetections(EnglishSample, True, lkRU, Flagged, Total);
+  Assert.IsTrue(Flagged * 100 >= Total * MinEnglishDetected, Format('%d of %d', [Flagged, Total]));
+end;
+
+procedure TDetectionTests.KeepsRussianWordsTypedInRussian;
+var
+  Flagged, Total: Integer;
+begin
+  CountDetections(RussianSample, False, lkRU, Flagged, Total);
+  Assert.IsTrue(Flagged * 100 <= Total * MaxRussianFalse, Format('%d of %d', [Flagged, Total]));
+end;
+
+procedure TDetectionTests.KeepsEnglishWordsTypedInEnglish;
+var
+  Flagged, Total: Integer;
+begin
+  CountDetections(EnglishSample, False, lkEN, Flagged, Total);
+  Assert.IsTrue(Flagged * 100 <= Total * MaxEnglishFalse, Format('%d of %d', [Flagged, Total]));
 end;
 
 procedure TAnalyzerTests.DetectsRussianWordTypedWithEnglishLayout;
@@ -429,6 +611,24 @@ begin
     RememberPhraseLanguage(Result, Lang);
 end;
 
+procedure TAnalyzerTests.ShortWordNeedsRussianWordsBeforeIt;
+var
+  Analysis: TAnalysisResult;
+begin
+  // At the start of a phrase "vs" and "c" read as English as easily as Russian.
+  Assert.IsFalse(AnalyzeWord('vs', lkEN, hmBalanced, nil, nil, EmptyPhrase).NeedsSwitch);
+  Assert.IsFalse(AnalyzeWord('c', lkEN, hmBalanced, nil, nil, PhraseOf([lkEN])).NeedsSwitch);
+
+  Analysis := AnalyzeWord('vs', lkEN, hmBalanced, nil, nil, PhraseOf([lkRU]));
+  Assert.IsTrue(Analysis.NeedsSwitch);
+  Assert.AreEqual('мы', Analysis.ConvertedText);
+
+  // A word that is not a Russian function word is scored as usual.
+  Assert.IsFalse(AnalyzeWord('hi', lkEN, hmBalanced, nil, nil, PhraseOf([lkRU])).NeedsSwitch);
+  // A selection converted by hand has no tracked context.
+  Assert.IsTrue(AnalyzeWord('vs', lkEN).NeedsSwitch);
+end;
+
 procedure TAnalyzerTests.FrequentRussianWordTypedInEnglishSwitches;
 var
   Analysis: TAnalysisResult;
@@ -445,14 +645,14 @@ var
   Analysis: TAnalysisResult;
   Phrase: TPhraseContext;
 begin
-  Analysis := AnalyzeWord('cjr', lkEN);
+  Analysis := AnalyzeWord('buhs', lkEN);
   Assert.IsFalse(Analysis.NeedsSwitch);
   Phrase := PhraseOf([lkRU, lkRU]);
-  Analysis := AnalyzeWord('cjr', lkEN, hmBalanced, nil, nil, Phrase);
+  Analysis := AnalyzeWord('buhs', lkEN, hmBalanced, nil, nil, Phrase);
   Assert.IsTrue(Analysis.NeedsSwitch);
-  Assert.AreEqual('сок', Analysis.ConvertedText);
+  Assert.AreEqual('игры', Analysis.ConvertedText);
   Phrase := PhraseOf([lkRU, lkRU, lkRU]);
-  Analysis := AnalyzeWord('cjr', lkEN, hmCautious, nil, nil, Phrase);
+  Analysis := AnalyzeWord('buhs', lkEN, hmCautious, nil, nil, Phrase);
   Assert.IsFalse(Analysis.NeedsSwitch);
 end;
 
@@ -460,10 +660,10 @@ procedure TAnalyzerTests.EnglishContextKeepsABorderlineWord;
 var
   Analysis: TAnalysisResult;
 begin
-  Analysis := AnalyzeWord('jryj', lkEN);
+  Analysis := AnalyzeWord('vjuen', lkEN);
   Assert.IsTrue(Analysis.NeedsSwitch);
-  Assert.AreEqual('окно', Analysis.ConvertedText);
-  Analysis := AnalyzeWord('jryj', lkEN, hmBalanced, nil, nil, PhraseOf([lkEN, lkEN]));
+  Assert.AreEqual('могут', Analysis.ConvertedText);
+  Analysis := AnalyzeWord('vjuen', lkEN, hmBalanced, nil, nil, PhraseOf([lkEN, lkEN]));
   Assert.IsFalse(Analysis.NeedsSwitch);
 end;
 
@@ -619,6 +819,20 @@ begin
   Assert.IsFalse(TryWordAtCaret('hello world', -1, Start, Finish));
 end;
 
+procedure TAnalyzerTests.AppliesCaseModes;
+begin
+  Assert.AreEqual('ПРИВЕТ МИР 1', ApplyCaseMode('Привет мир 1', cmUpper));
+  Assert.AreEqual('привет мир 1', ApplyCaseMode('Привет МИР 1', cmLower));
+  Assert.AreEqual('HELLO', ApplyCaseMode('hello', cmUpper));
+  Assert.AreEqual('Привет', ApplyCaseMode('пРИВЕТ', cmCapitalize));
+  Assert.AreEqual('Hello world', ApplyCaseMode('hELLO WORLD', cmCapitalize));
+  Assert.AreEqual('Один. Два! Три? Четыре', ApplyCaseMode('ОДИН. два! ТРИ? четыре', cmCapitalize));
+  Assert.AreEqual('Первая'#13#10'Вторая', ApplyCaseMode('первая'#13#10'вторая', cmCapitalize));
+  Assert.AreEqual('1Abc', ApplyCaseMode('1ABC', cmCapitalize));
+  Assert.AreEqual('пРИВЕТ', ApplyCaseMode('Привет', cmInvert));
+  Assert.AreEqual('', ApplyCaseMode('', cmCapitalize));
+end;
+
 procedure TAnalyzerTests.InvertsEachLetterCase;
 begin
   Assert.AreEqual('ПРИВЕТ', InvertLetterCase('привет'));
@@ -634,6 +848,89 @@ begin
   Assert.AreEqual('123', InvertLetterCase('123'));
   Assert.AreEqual('', InvertLetterCase(''));
   Assert.AreEqual('Привет', InvertLetterCase(InvertLetterCase('Привет')));
+end;
+
+procedure TAnalyzerTests.CountsCaretStepsAcrossLineBreaks;
+begin
+  Assert.AreEqual(0, CaretStepCount(''));
+  Assert.AreEqual(3, CaretStepCount('abc'));
+  Assert.AreEqual(3, CaretStepCount('a'#13#10'b'));
+  Assert.AreEqual(3, CaretStepCount('a'#10'b'));
+  Assert.AreEqual(3, CaretStepCount('a'#13'b'));
+  Assert.AreEqual(2, CaretStepCount(#13#10#13#10));
+  Assert.AreEqual(4, CaretStepCount(#13#10#13#10'ab'));
+  Assert.AreEqual(1, CaretStepCount(Char($D83D) + Char($DE00)));
+  Assert.AreEqual('a'#10'b'#10#10'c', NormalizeLineBreaks('a'#13#10'b'#13#13#10'c'));
+  Assert.AreEqual(NormalizeLineBreaks('x'#13#10'y'), NormalizeLineBreaks('x'#10'y'));
+end;
+
+procedure TAnalyzerTests.FixesTwoInitialCapitalsOnly;
+var
+  Fixed: string;
+begin
+  Assert.IsTrue(TryFixInitialCapitals('ТОлько', Fixed));
+  Assert.AreEqual('Только', Fixed);
+  Assert.IsTrue(TryFixInitialCapitals('ПРивет', Fixed));
+  Assert.AreEqual('Привет', Fixed);
+  Assert.IsTrue(TryFixInitialCapitals('HEllo', Fixed));
+  Assert.AreEqual('Hello', Fixed);
+
+  // Correct words, acronyms and CamelCase names stay as they are.
+  Assert.IsFalse(TryFixInitialCapitals('Только', Fixed));
+  Assert.IsFalse(TryFixInitialCapitals('только', Fixed));
+  Assert.IsFalse(TryFixInitialCapitals('ТОЛЬКО', Fixed));
+  Assert.IsFalse(TryFixInitialCapitals('США', Fixed));
+  Assert.IsFalse(TryFixInitialCapitals('HTTP', Fixed));
+  Assert.IsFalse(TryFixInitialCapitals('TForm', Fixed));
+  Assert.IsFalse(TryFixInitialCapitals('IUnknown', Fixed));
+  Assert.IsFalse(TryFixInitialCapitals('ПРиветМир', Fixed));
+  Assert.IsFalse(TryFixInitialCapitals('XMLParser', Fixed));
+  Assert.IsFalse(TryFixInitialCapitals('iPhone', Fixed));
+  // Too short, mixed alphabets, digits and separators are never touched.
+  Assert.IsFalse(TryFixInitialCapitals('ТВо', Fixed));
+  Assert.IsFalse(TryFixInitialCapitals('ТОлькоabc', Fixed));
+  Assert.IsFalse(TryFixInitialCapitals('ТОлько1', Fixed));
+  Assert.IsFalse(TryFixInitialCapitals('ТОлько-то', Fixed));
+  Assert.IsFalse(TryFixInitialCapitals('', Fixed));
+end;
+
+procedure TAnalyzerTests.FixesWordTypedWithCapsLock;
+var
+  Fixed: string;
+begin
+  Assert.IsTrue(TryFixCapsLockWord('пРИВЕТ', Fixed));
+  Assert.AreEqual('Привет', Fixed);
+  Assert.IsTrue(TryFixCapsLockWord('hELLO', Fixed));
+  Assert.AreEqual('Hello', Fixed);
+  Assert.IsTrue(TryFixCapsLockWord('тЕСТ', Fixed));
+  Assert.AreEqual('Тест', Fixed);
+
+  Assert.IsFalse(TryFixCapsLockWord('Привет', Fixed));
+  Assert.IsFalse(TryFixCapsLockWord('привет', Fixed));
+  Assert.IsFalse(TryFixCapsLockWord('ПРИВЕТ', Fixed));
+  Assert.IsFalse(TryFixCapsLockWord('iOS', Fixed));
+  Assert.IsFalse(TryFixCapsLockWord('пРИВетт', Fixed));
+  Assert.IsFalse(TryFixCapsLockWord('пРИВЕТ1', Fixed));
+  Assert.IsFalse(TryFixCapsLockWord('пРИВ-ЕТ', Fixed));
+  Assert.IsFalse(TryFixCapsLockWord('', Fixed));
+end;
+
+procedure TAnalyzerTests.SwitchesFileExtensionTypedOnRussianLayout;
+var
+  Mode: THeuristicMode;
+  Analysis: TAnalysisResult;
+begin
+  for Mode := Low(THeuristicMode) to High(THeuristicMode) do
+  begin
+    Analysis := AnalyzeWord('юзва', lkRU, Mode, nil);
+    Assert.IsTrue(Analysis.NeedsSwitch);
+    Assert.AreEqual('.pdf', Analysis.ConvertedText);
+    Assert.AreEqual(Integer(lkEN), Integer(Analysis.TargetLang));
+  end;
+  Assert.AreEqual('.docx', AnalyzeWord('ювщсч', lkRU).ConvertedText);
+  // A Russian word that only starts with "ю" is not an extension.
+  Assert.IsFalse(AnalyzeWord('юбилей', lkRU).NeedsSwitch);
+  Assert.IsFalse(AnalyzeWord('юг', lkRU).NeedsSwitch);
 end;
 
 procedure TAnalyzerTests.ProtectsTechnicalTokensAndAbbreviations;
@@ -840,6 +1137,104 @@ begin
     else
       TFile.Delete(ConfigPath);
   end;
+end;
+
+procedure TSettingsTests.PersistsInitialCapsOptions;
+var
+  Source: TSettings;
+  Loaded: TSettings;
+  ConfigPath: string;
+  PreviousContent: TBytes;
+  HadConfig: Boolean;
+begin
+  ConfigPath := TPath.Combine(ExtractFilePath(ParamStr(0)), 'config.json');
+  HadConfig := TFile.Exists(ConfigPath);
+  if HadConfig then
+    PreviousContent := TFile.ReadAllBytes(ConfigPath);
+
+  Source := TSettings.Create;
+  Loaded := TSettings.Create;
+  try
+    Assert.IsTrue(Source.FixInitialCaps);
+    Assert.IsFalse(Source.IsCaseFixKept('Только'));
+    Source.KeepCaseFixWord('ТОлько');
+    Assert.IsTrue(Source.IsCaseFixKept('только'));
+    Assert.IsTrue(Source.IsCaseFixKept('Только'));
+    Source.FixInitialCaps := False;
+    Source.FixCapsLock := False;
+    Source.SaveToFile;
+
+    Loaded.LoadFromFile;
+    Assert.IsFalse(Loaded.FixInitialCaps);
+    Assert.IsFalse(Loaded.FixCapsLock);
+    Assert.IsTrue(Loaded.IsCaseFixKept('только'));
+    Assert.IsFalse(Loaded.IsCaseFixKept('привет'));
+  finally
+    Loaded.Free;
+    Source.Free;
+    if HadConfig then
+      TFile.WriteAllBytes(ConfigPath, PreviousContent)
+    else
+      TFile.Delete(ConfigPath);
+  end;
+end;
+
+procedure TSettingsTests.AlwaysExcludesPasswordManagers;
+var
+  Settings: TSettings;
+begin
+  Settings := TSettings.Create;
+  try
+    Settings.ClearExclusions;
+    Assert.IsTrue(Settings.IsProcessExcluded('C:\Program Files\KeePass\KeePass.exe'));
+    Assert.IsTrue(Settings.IsProcessExcluded('bitwarden.exe'));
+    Assert.IsFalse(Settings.IsProcessExcluded('notepad.exe'));
+    Assert.IsFalse(Settings.IsProcessExcluded('keepass-notes.exe'));
+    Assert.IsTrue(Settings.PauseInFullscreen);
+  finally
+    Settings.Free;
+  end;
+end;
+
+procedure TSettingsTests.RecognizesFullscreenNotificationStates;
+begin
+  Assert.IsTrue(IsFullscreenNotificationState(QUNS_BUSY));
+  Assert.IsTrue(IsFullscreenNotificationState(QUNS_RUNNING_D3D_FULL_SCREEN));
+  Assert.IsTrue(IsFullscreenNotificationState(QUNS_PRESENTATION_MODE));
+  Assert.IsFalse(IsFullscreenNotificationState(QUNS_ACCEPTS_NOTIFICATIONS));
+  Assert.IsFalse(IsFullscreenNotificationState(QUNS_NOT_PRESENT));
+end;
+
+procedure TSettingsTests.DrawsBadgeBorderInADarkerShadeOfTheFill;
+var
+  Fill, Border: Integer;
+begin
+  Fill := Integer(BadgeColorFor(lkRU));
+  Border := Integer(DarkerShade(BadgeColorFor(lkRU)));
+  Assert.AreEqual(247, Fill and $FF);
+  Assert.AreEqual(148, Border and $FF);
+  Assert.AreEqual(91, (Border shr 8) and $FF);
+  Assert.AreEqual(16, (Border shr 16) and $FF);
+  Assert.IsTrue((Integer(DarkerShade(BadgeColorFor(lkEN))) and $FF) <
+    (Integer(BadgeColorFor(lkEN)) and $FF));
+  Assert.AreEqual(Integer($FFFFFF), Integer(BadgeInkFor(lkEN)));
+  Assert.AreEqual(0, Integer(BadgeInkFor(lkRU)));
+  Assert.AreNotEqual(Integer(BadgeColorFor(lkRU)), Integer(BadgeColorFor(lkEN)));
+end;
+
+procedure TSettingsTests.RecognizesEmailFieldLabels;
+begin
+  Assert.IsTrue(IsEmailFieldName('Email'));
+  Assert.IsTrue(IsEmailFieldName('E-mail address'));
+  Assert.IsTrue(IsEmailFieldName('  Email or phone'));
+  Assert.IsTrue(IsEmailFieldName('Электронная почта'));
+  Assert.IsTrue(IsEmailFieldName('Адрес электронной почты'));
+  Assert.IsTrue(IsEmailFieldName('Почта'));
+  // Search boxes and free text keep the Russian layout.
+  Assert.IsFalse(IsEmailFieldName('Search mail'));
+  Assert.IsFalse(IsEmailFieldName('Поиск в почте'));
+  Assert.IsFalse(IsEmailFieldName('Адрес доставки'));
+  Assert.IsFalse(IsEmailFieldName(''));
 end;
 
 procedure TSettingsTests.SupportsWildcardExclusionsAndRules;
@@ -1360,6 +1755,17 @@ begin
   end;
 end;
 
+procedure TInputQueueTests.DropsWorkForAnotherControlOrAnOldItem;
+begin
+  Assert.IsTrue(IsWorkItemCurrent(10, 10, 1000, 1500));
+  Assert.IsTrue(IsWorkItemCurrent(0, 20, 1000, 1500));
+  Assert.IsTrue(IsWorkItemCurrent(10, 0, 1000, 1500));
+  Assert.IsFalse(IsWorkItemCurrent(10, 20, 1000, 1500));
+  Assert.IsTrue(IsWorkItemCurrent(10, 10, 1000, 1000 + MaxWorkItemAgeMs));
+  Assert.IsFalse(IsWorkItemCurrent(10, 10, 1000, 1001 + MaxWorkItemAgeMs));
+  Assert.IsTrue(IsWorkItemCurrent(10, 10, 0, 999999));
+end;
+
 procedure TInputQueueTests.CapturesReplayOnlyWhilePending;
 var
   Queue: TInputQueue;
@@ -1626,6 +2032,17 @@ begin
   finally
     First.Free;
   end;
+end;
+
+procedure THookHelperTests.CountsMinutesLeftOnATimedPause;
+begin
+  Assert.AreEqual(30, PauseMinutesLeft(1800000, 0));
+  Assert.AreEqual(30, PauseMinutesLeft(1800000, 1));
+  Assert.AreEqual(1, PauseMinutesLeft(60000, 0));
+  Assert.AreEqual(1, PauseMinutesLeft(1, 0));
+  Assert.AreEqual(29, PauseMinutesLeft(1800000, 60000));
+  Assert.AreEqual(0, PauseMinutesLeft(1000, 1000));
+  Assert.AreEqual(0, PauseMinutesLeft(1000, 2000));
 end;
 
 procedure THookHelperTests.LearningWindowExpires;
@@ -1895,10 +2312,211 @@ begin
   Assert.IsTrue(LearnedFormsMatch('человек', 'люди'));
 end;
 
+function PutTextAndPayload(const AText: string; AFormat: UINT;
+  const APayload: TBytes): Boolean;
+var
+  TextData, PayloadData: THandle;
+  Ptr: Pointer;
+begin
+  Result := False;
+  TextData := GlobalAlloc(GMEM_MOVEABLE, (Length(AText) + 1) * SizeOf(Char));
+  PayloadData := GlobalAlloc(GMEM_MOVEABLE, Length(APayload));
+  Ptr := GlobalLock(TextData);
+  Move(PChar(AText)^, Ptr^, (Length(AText) + 1) * SizeOf(Char));
+  GlobalUnlock(TextData);
+  Ptr := GlobalLock(PayloadData);
+  Move(APayload[0], Ptr^, Length(APayload));
+  GlobalUnlock(PayloadData);
+  if not OpenClipboardWithRetry then
+    Exit;
+  try
+    EmptyClipboard;
+    Result := (SetClipboardData(CF_UNICODETEXT, TextData) <> 0) and
+      (SetClipboardData(AFormat, PayloadData) <> 0);
+  finally
+    CloseClipboard;
+  end;
+end;
+
+function ReadPayload(AFormat: UINT): TBytes;
+var
+  Data: THandle;
+  Ptr: Pointer;
+begin
+  Result := nil;
+  if not OpenClipboardWithRetry then
+    Exit;
+  try
+    Data := GetClipboardData(AFormat);
+    if Data = 0 then
+      Exit;
+    Ptr := GlobalLock(Data);
+    try
+      SetLength(Result, GlobalSize(Data));
+      Move(Ptr^, Result[0], Length(Result));
+    finally
+      GlobalUnlock(Data);
+    end;
+  finally
+    CloseClipboard;
+  end;
+end;
+
+procedure TTranslitTests.ConvertsRussianToLatinLetters;
+begin
+  Assert.AreEqual('Privet, mir!', ToTranslit('Привет, мир!'));
+  Assert.AreEqual('shchuka', ToTranslit('щука'));
+  Assert.AreEqual('Zhizn''', ToTranslit('Жизнь'));
+  Assert.AreEqual('Yulya', ToTranslit('Юля'));
+  Assert.AreEqual('Yozh', ToTranslit('Ёж'));
+  Assert.AreEqual('Pod''''ezd', ToTranslit('Подъезд'));
+  Assert.AreEqual('chasha, tsvet, khleb', ToTranslit('чаша, цвет, хлеб'));
+  Assert.AreEqual('Yaroslav Yur''evich', ToTranslit('Ярослав Юрьевич'));
+end;
+
+procedure TTranslitTests.KeepsCaseOfGroupsAndLineBreaks;
+begin
+  Assert.AreEqual('Shchuka', ToTranslit('Щука'));
+  Assert.AreEqual('SHCHUKA', ToTranslit('ЩУКА'));
+  Assert.AreEqual('ZHUK', ToTranslit('ЖУК'));
+  Assert.AreEqual('Zhuk', ToTranslit('Жук'));
+  Assert.AreEqual('Ya', ToTranslit('Я'));
+  Assert.AreEqual('Pervaya'#13#10#13#10'Vtoraya', ToTranslit('Первая'#13#10#13#10'Вторая'));
+  Assert.AreEqual('a'#10'b', ToTranslit('а'#10'б'));
+end;
+
+procedure TTranslitTests.ConvertsLatinToRussianLetters;
+begin
+  Assert.AreEqual('Привет, мир!', FromTranslit('Privet, mir!'));
+  Assert.AreEqual('Москва', FromTranslit('Moskva'));
+  Assert.AreEqual('Хлеб', FromTranslit('Khleb'));
+  Assert.AreEqual('Жук', FromTranslit('Zhuk'));
+  Assert.AreEqual('ЖУК', FromTranslit('ZHUK'));
+  Assert.AreEqual('Юля', FromTranslit('Yulya'));
+  Assert.AreEqual('Ёж', FromTranslit('Yozh'));
+  Assert.AreEqual('мяч', FromTranslit('myach'));
+  Assert.AreEqual('Первая'#13#10'Вторая', FromTranslit('Pervaya'#13#10'Vtoraya'));
+end;
+
+procedure TTranslitTests.RestoresSignsAndLongGroups;
+begin
+  Assert.AreEqual('Щука', FromTranslit('Shchuka'));
+  Assert.AreEqual('ЩИ', FromTranslit('SHCHI'));
+  Assert.AreEqual('Жизнь', FromTranslit('Zhizn'''));
+  Assert.AreEqual('подъезд', FromTranslit('pod''''ezd'));
+  Assert.AreEqual('Сергей', FromTranslit('Sergey'));
+  Assert.AreEqual('Толстой', FromTranslit('Tolstoy'));
+  Assert.AreEqual('ты', FromTranslit('ty'));
+  Assert.AreEqual('Это', FromTranslit('Eto'));
+  Assert.AreEqual('цирк', FromTranslit('cirk'));
+  Assert.AreEqual('Евгений', FromTranslit('Yevgeniy'));
+  Assert.AreEqual('Привет', FromTranslit(ToTranslit('Привет')));
+  Assert.AreEqual('Подъезд', FromTranslit(ToTranslit('Подъезд')));
+end;
+
+procedure TTranslitTests.LeavesOtherCharactersAlone;
+begin
+  Assert.AreEqual('', ToTranslit(''));
+  Assert.AreEqual('', FromTranslit(''));
+  Assert.AreEqual('abc 123 - ?', ToTranslit('abc 123 - ?'));
+  Assert.AreEqual('привет 123 - ?', FromTranslit('привет 123 - ?'));
+  Assert.AreEqual('x', ApplyTranslit('x', tdNone));
+  Assert.AreEqual('Privet', ApplyTranslit('Привет', tdToLatin));
+  Assert.AreEqual('Привет', ApplyTranslit('Privet', tdToCyrillic));
+end;
+
+procedure TClipboardTests.RestoresEveryCopiedFormat;
+var
+  Original, Snapshot: TClipboardSnapshot;
+  CaptureResult: TClipboardCaptureResult;
+  Format: UINT;
+  Payload, Restored: TBytes;
+  HadOriginal: Boolean;
+begin
+  HadOriginal := TryCaptureClipboard(Original, CaptureResult);
+  try
+    Format := RegisterClipboardFormat('Ghbdtn.Test.Payload');
+    Payload := TBytes.Create(1, 2, 3, 4, 5, 0, 255);
+    Assert.IsTrue(PutTextAndPayload('Ghbdtn clipboard', Format, Payload));
+
+    Assert.IsTrue(TryCaptureClipboard(Snapshot, CaptureResult));
+    Assert.AreEqual(Integer(ccOk), Integer(CaptureResult));
+
+    Assert.IsTrue(TryClearClipboard);
+    Assert.IsFalse(ClipboardHoldsText('Ghbdtn clipboard'));
+    Assert.AreEqual(0, Integer(Length(ReadPayload(Format))));
+
+    Assert.IsTrue(TryRestoreClipboard(Snapshot));
+    Assert.IsTrue(ClipboardHoldsText('Ghbdtn clipboard'));
+    Restored := ReadPayload(Format);
+    Assert.AreEqual(Integer(Length(Payload)), Integer(Length(Restored)));
+    Assert.IsTrue(CompareMem(@Payload[0], @Restored[0], Length(Payload)));
+  finally
+    if HadOriginal then
+      TryRestoreClipboard(Original)
+    else
+      TryClearClipboard;
+  end;
+end;
+
+procedure TClipboardTests.RefusesContentThatCannotBeCopied;
+var
+  Original, Snapshot: TClipboardSnapshot;
+  CaptureResult: TClipboardCaptureResult;
+  Meta: HENHMETAFILE;
+  HadOriginal: Boolean;
+begin
+  HadOriginal := TryCaptureClipboard(Original, CaptureResult);
+  try
+    Meta := CloseEnhMetaFile(CreateEnhMetaFile(0, nil, nil, nil));
+    Assert.IsTrue(OpenClipboardWithRetry);
+    try
+      EmptyClipboard;
+      Assert.IsTrue(SetClipboardData(CF_ENHMETAFILE, Meta) <> 0);
+    finally
+      CloseClipboard;
+    end;
+
+    Assert.IsFalse(TryCaptureClipboard(Snapshot, CaptureResult));
+    Assert.AreEqual(Integer(ccUnsupported), Integer(CaptureResult));
+    Assert.AreEqual(0, Integer(Length(Snapshot.Items)));
+    // Nothing was cleared: the content is still there for the user.
+    Assert.IsTrue(IsClipboardFormatAvailable(CF_ENHMETAFILE));
+  finally
+    if HadOriginal then
+      TryRestoreClipboard(Original)
+    else
+      TryClearClipboard;
+  end;
+end;
+
+procedure TClipboardTests.SequenceChangesWhenTextIsWritten;
+var
+  Original: TClipboardSnapshot;
+  CaptureResult: TClipboardCaptureResult;
+  Before: DWORD;
+  HadOriginal: Boolean;
+begin
+  HadOriginal := TryCaptureClipboard(Original, CaptureResult);
+  try
+    Before := ClipboardSequence;
+    Assert.IsTrue(TryWriteClipboardText('Ghbdtn sequence'));
+    Assert.AreNotEqual(Before, ClipboardSequence);
+    Assert.IsTrue(ClipboardHoldsText('Ghbdtn sequence'));
+    Assert.IsFalse(ClipboardHoldsText('Ghbdtn other'));
+  finally
+    if HadOriginal then
+      TryRestoreClipboard(Original)
+    else
+      TryClearClipboard;
+  end;
+end;
+
 initialization
   TDUnitX.RegisterTestFixture(TLayoutTests);
   TDUnitX.RegisterTestFixture(TUpdateTests);
   TDUnitX.RegisterTestFixture(TAnalyzerTests);
+  TDUnitX.RegisterTestFixture(TDetectionTests);
   TDUnitX.RegisterTestFixture(TInputBufferTests);
   TDUnitX.RegisterTestFixture(TLeftShiftStateTests);
   TDUnitX.RegisterTestFixture(TSettingsTests);
@@ -1908,5 +2526,7 @@ initialization
   TDUnitX.RegisterTestFixture(THookHelperTests);
   TDUnitX.RegisterTestFixture(TLearningTests);
   TDUnitX.RegisterTestFixture(TPhraseTests);
+  TDUnitX.RegisterTestFixture(TClipboardTests);
+  TDUnitX.RegisterTestFixture(TTranslitTests);
 
 end.

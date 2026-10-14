@@ -11,6 +11,9 @@ uses
   Ghbdtn.Layout;
 
 procedure ShowCaretHint(ALang: TLangKind; const ANote: string = '');
+{ Shows a short message at the caret without a layout tag. Safe to call
+  from any thread. }
+procedure ShowCaretNote(const ANote: string);
 
 implementation
 
@@ -21,6 +24,7 @@ uses
   Vcl.Graphics,
   Vcl.ExtCtrls,
   Winapi.UIAutomation,
+  Ghbdtn.Colors,
   Ghbdtn.Settings;
 
 const
@@ -28,7 +32,9 @@ const
   HintHeight = 22;
   HintVisibleMs = 1100;
   HintFlashMs = 380;
-  HintNormalColor = $001B98F7;
+  // A bare message without a layout is dark gray; the layouts use the colors
+  // of the tray badge.
+  HintNoteColor = $00464646;
 
 type
   TCaretHintForm = class(TForm)
@@ -42,10 +48,13 @@ type
     FOffsetOrigin: TPoint;
     FAppearedAt: UInt64;
     FNote: string;
+    FLang: TLangKind;
     FNoteUntil: UInt64;
     FTimer: TTimer;
     procedure HideHint;
     procedure PlaceAtCaret;
+    function HintBaseColor: TColor;
+    function HintInkColor: TColor;
     function HintFillColor: TColor;
     function HintScale: Double;
     function FlashActive: Boolean;
@@ -219,7 +228,8 @@ begin
   inherited CreateNew(AOwner);
   BorderStyle := bsNone;
   FormStyle := fsStayOnTop;
-  Color := HintNormalColor;
+  FLang := lkEN;
+  Color := BadgeColorFor(lkEN);
   Caption := 'EN';
   ClientWidth := HintWidth;
   ClientHeight := HintHeight;
@@ -256,12 +266,12 @@ var
 begin
   Canvas.Brush.Color := HintFillColor;
   Canvas.FillRect(ClientRect);
-  Canvas.Pen.Color := clBlack;
+  Canvas.Pen.Color := DarkerShade(HintBaseColor);
   Canvas.Brush.Style := bsClear;
   Canvas.Rectangle(0, 0, ClientWidth, ClientHeight);
   Canvas.Font.Name := 'Segoe UI';
   Canvas.Font.Style := [fsBold];
-  Canvas.Font.Color := clBlack;
+  Canvas.Font.Color := HintInkColor;
   Canvas.Font.Height := -Round(14 * HintScale);
   R := ClientRect;
   DrawText(Canvas.Handle, PChar(Caption), Length(Caption), R,
@@ -287,6 +297,19 @@ begin
   Result := 1 + 0.28 * (1 - Elapsed / HintFlashMs);
 end;
 
+function TCaretHintForm.HintBaseColor: TColor;
+begin
+  if FLang in [lkRU, lkEN] then
+    Result := BadgeColorFor(FLang)
+  else
+    Result := HintNoteColor;
+end;
+
+function TCaretHintForm.HintInkColor: TColor;
+begin
+  Result := BadgeInkFor(FLang);
+end;
+
 function TCaretHintForm.HintFillColor: TColor;
 var
   Elapsed: UInt64;
@@ -294,17 +317,32 @@ var
   NormalR, NormalG, NormalB: Integer;
   FlashR, FlashG, FlashB: Integer;
 begin
-  Result := HintNormalColor;
+  Result := HintBaseColor;
   if not FlashActive then
     Exit;
   Elapsed := GetTickCount64 - FAppearedAt;
   Amount := Elapsed / HintFlashMs;
-  NormalR := GetRValue(HintNormalColor);
-  NormalG := GetGValue(HintNormalColor);
-  NormalB := GetBValue(HintNormalColor);
-  FlashR := 255;
-  FlashG := 244;
-  FlashB := 180;
+  NormalR := GetRValue(HintBaseColor);
+  NormalG := GetGValue(HintBaseColor);
+  NormalB := GetBValue(HintBaseColor);
+  case FLang of
+    lkEN:
+      begin
+        FlashR := 190;
+        FlashG := 215;
+        FlashB := 255;
+      end;
+    lkRU:
+      begin
+        FlashR := 255;
+        FlashG := 244;
+        FlashB := 180;
+      end;
+  else
+    FlashR := 200;
+    FlashG := 200;
+    FlashB := 200;
+  end;
   Result := RGB(
     Round(FlashR + (NormalR - FlashR) * Amount),
     Round(FlashG + (NormalG - FlashG) * Amount),
@@ -359,6 +397,7 @@ begin
     HideHint;
     Exit;
   end;
+  FLang := ALang;
   Note := ANote;
   if Note <> '' then
   begin
@@ -477,6 +516,18 @@ begin
   if HintForm = nil then
     HintForm := TCaretHintForm.Create(nil);
   HintForm.ShowLanguage(ALang, ANote);
+end;
+
+procedure ShowCaretNote(const ANote: string);
+begin
+  if GetCurrentThreadId = MainThreadID then
+    ShowCaretHint(lkUnknown, ANote)
+  else
+    TThread.Queue(nil,
+      procedure
+      begin
+        ShowCaretHint(lkUnknown, ANote);
+      end);
 end;
 
 initialization

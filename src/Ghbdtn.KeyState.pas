@@ -22,6 +22,8 @@ function IsDoubleLeftShift(
 function IsRightShiftKey(AVirtualKey, AScanCode: DWORD): Boolean;
 function IsWithinLearningWindow(AConversionTick, ACurrentTick,
   AWindowMs: UInt64): Boolean;
+{ Whole minutes left on a timed pause, rounded up; 0 once AUntil has passed. }
+function PauseMinutesLeft(AUntil, ANow: UInt64): Integer;
 function IsRussianLetterOnPunctuationKey(AChar: Char): Boolean;
 function ColonEndsASingleLetter(const AWord: string; APunctuation: Char): Boolean;
 function IsUsableExternalTarget(AWindowProcessId, AOwnProcessId: DWORD;
@@ -31,6 +33,13 @@ implementation
 
 uses
   System.SysUtils;
+
+function PauseMinutesLeft(AUntil, ANow: UInt64): Integer;
+begin
+  if AUntil <= ANow then
+    Exit(0);
+  Result := Integer((AUntil - ANow + 59999) div 60000);
+end;
 
 function TrackLeftShiftState(
   var AIsDown: Boolean;

@@ -6,18 +6,21 @@ uses
   Winapi.Windows,
   System.Generics.Collections,
   System.SyncObjs,
+  Ghbdtn.Analyzer,
   Ghbdtn.Layout,
-  Ghbdtn.Learning;
+  Ghbdtn.Learning,
+  Ghbdtn.Translit;
 
 type
-  TInputWorkKind = (iwReplaceWord, iwReplaceSelection, iwSwitchLayout,
-    iwPersistSettings);
+  TInputWorkKind = (iwReplaceWord, iwReplaceSelection, iwReplaceBeforeCaret,
+    iwSwitchLayout, iwPersistSettings);
 
   TInputWorkItem = record
     Kind: TInputWorkKind;
     TargetWindow: HWND;
     OldWordLength: Integer;
     NewText: string;
+    ExpectedText: string;
     TargetLang: TLangKind;
     TrailingKey: Word;
     PlaySwitchSound: Boolean;
@@ -26,6 +29,14 @@ type
     LearningAction: TLearningAction;
     FromCaret: Boolean;
     CaseCycle: Boolean;
+    KeepLayout: Boolean;
+    ToggleCapsLock: Boolean;
+    CaseMode: TCaseMode;
+    Translit: TTranslitDirection;
+    ActivateTarget: Boolean;
+    SwitchLayoutAfter: Boolean;
+    TargetFocus: HWND;
+    EnqueuedTick: UInt64;
   end;
 
   TQueuedInput = record
@@ -34,6 +45,16 @@ type
     Flags: DWORD;
   end;
 
+{ A queued replacement is applied only to the control it was prepared for and
+  only shortly after it was queued; otherwise the text under the caret is no
+  longer the text it was computed from. }
+function IsWorkItemCurrent(AItemFocus, ACurrentFocus: HWND;
+  AEnqueuedTick, ANow: UInt64): Boolean;
+
+const
+  MaxWorkItemAgeMs = 3000;
+
+type
   TInputQueue = class
   private
     FLock: TCriticalSection;
@@ -60,6 +81,16 @@ type
   end;
 
 implementation
+
+function IsWorkItemCurrent(AItemFocus, ACurrentFocus: HWND;
+  AEnqueuedTick, ANow: UInt64): Boolean;
+begin
+  if (AItemFocus <> 0) and (ACurrentFocus <> 0) and
+     (AItemFocus <> ACurrentFocus) then
+    Exit(False);
+  Result := (AEnqueuedTick = 0) or (ANow < AEnqueuedTick) or
+    (ANow - AEnqueuedTick <= MaxWorkItemAgeMs);
+end;
 
 constructor TInputQueue.Create;
 begin

@@ -9,9 +9,12 @@ uses
   Vcl.Graphics,
   Vcl.Controls,
   Vcl.ExtCtrls,
+  Ghbdtn.Colors,
   Ghbdtn.Layout;
 
-procedure UpdateTrayIconLang(ATrayIcon: TTrayIcon; ALang: TLangKind);
+{ APaused adds a contrasting dot in the lower right corner of the badge. }
+procedure UpdateTrayIconLang(ATrayIcon: TTrayIcon; ALang: TLangKind;
+  APaused: Boolean = False);
 
 implementation
 
@@ -20,18 +23,19 @@ const
   // under it; the letter stroke does not.
   cBadgeInkDistance = 2500;
 
-procedure SelectBadgeFont(ACanvas: TCanvas; AIconH, AExtra: Integer);
+procedure SelectBadgeFont(ACanvas: TCanvas; AIconH, AExtra: Integer;
+  AInk: TColor; AScale: Double);
 begin
   ACanvas.Font.Name := 'Segoe UI';
-  ACanvas.Font.Height := -Round(AIconH * 0.65);
+  ACanvas.Font.Height := -Round(AIconH * AScale);
   ACanvas.Font.Style := [fsBold];
-  ACanvas.Font.Color := clBlack;
+  ACanvas.Font.Color := AInk;
   SetBkMode(ACanvas.Handle, Winapi.Windows.TRANSPARENT);
   SetTextCharacterExtra(ACanvas.Handle, AExtra);
 end;
 
 function RightInkColumn(const AText: string; AIconW, AIconH, AExtra: Integer;
-  ABadge: TColor): Integer;
+  ABadge: TColor; AScale: Double): Integer;
 var
   Bmp: TBitmap;
   X, Y, BR, BG, BB, DR, DG, DB: Integer;
@@ -55,7 +59,7 @@ begin
     Bmp.Canvas.Brush.Color := ABadge;
     Bmp.Canvas.Brush.Style := bsSolid;
     Bmp.Canvas.FillRect(Rect(0, 0, AIconW, AIconH));
-    SelectBadgeFont(Bmp.Canvas, AIconH, AExtra);
+    SelectBadgeFont(Bmp.Canvas, AIconH, AExtra, clBlack, AScale);
     R := Rect(0, 0, AIconW, AIconH);
     DrawText(Bmp.Canvas.Handle, PChar(AText), Length(AText), R,
       DT_CENTER or DT_VCENTER or DT_SINGLELINE);
@@ -76,7 +80,8 @@ begin
   end;
 end;
 
-procedure UpdateTrayIconLang(ATrayIcon: TTrayIcon; ALang: TLangKind);
+procedure UpdateTrayIconLang(ATrayIcon: TTrayIcon; ALang: TLangKind;
+  APaused: Boolean);
 var
   ColorBmp, MaskBmp: TBitmap;
   IconInfo: TIconInfo;
@@ -84,8 +89,9 @@ var
   TempIcon: TIcon;
   TextStr: string;
   R: TRect;
-  IconW, IconH, CornerRadius, Extra: Integer;
-  BadgeColor: TColor;
+  IconW, IconH, CornerRadius, Extra, DotSize: Integer;
+  BadgeColor, InkColor, BorderColor: TColor;
+  FontScale: Double;
 begin
   if (ATrayIcon = nil) then Exit;
 
@@ -98,7 +104,15 @@ begin
   if IconH < 16 then IconH := 16;
 
   CornerRadius := Round(IconW * 0.25);
-  BadgeColor := RGB(247, 152, 27);
+  // Each layout has its own badge color, so a glance at the tray is enough.
+  BadgeColor := BadgeColorFor(ALang);
+  InkColor := BadgeInkFor(ALang);
+  BorderColor := DarkerShade(BadgeColor);
+  // The English letters are drawn larger than the Russian ones.
+  if ALang = lkEN then
+    FontScale := 0.75
+  else
+    FontScale := 0.65;
 
   ColorBmp := TBitmap.Create;
   MaskBmp := TBitmap.Create;
@@ -113,7 +127,7 @@ begin
 
     ColorBmp.Canvas.Brush.Color := BadgeColor;
     ColorBmp.Canvas.Brush.Style := bsSolid;
-    ColorBmp.Canvas.Pen.Color := clBlack;
+    ColorBmp.Canvas.Pen.Color := BorderColor;
     ColorBmp.Canvas.Pen.Width := 1;
     ColorBmp.Canvas.RoundRect(0, 0, IconW, IconH, CornerRadius, CornerRadius);
 
@@ -123,13 +137,26 @@ begin
     // an orange column before the frame.
     Extra := 0;
     while (Extra > -2) and
-      (RightInkColumn(TextStr, IconW, IconH, Extra, BadgeColor) >= IconW - 2) do
+      (RightInkColumn(TextStr, IconW, IconH, Extra, BadgeColor, FontScale) >= IconW - 2) do
       Dec(Extra);
 
-    SelectBadgeFont(ColorBmp.Canvas, IconH, Extra);
+    SelectBadgeFont(ColorBmp.Canvas, IconH, Extra, InkColor, FontScale);
     R := Rect(0, 0, IconW, IconH);
     DrawText(ColorBmp.Canvas.Handle, PChar(TextStr), Length(TextStr), R,
       DT_CENTER or DT_VCENTER or DT_SINGLELINE);
+
+    if APaused then
+    begin
+      // Red with a white ring: visible on the orange badge and on both
+      // light and dark taskbars.
+      DotSize := Round(IconW * 0.45);
+      ColorBmp.Canvas.Brush.Color := RGB(214, 20, 20);
+      ColorBmp.Canvas.Brush.Style := bsSolid;
+      ColorBmp.Canvas.Pen.Color := clWhite;
+      ColorBmp.Canvas.Pen.Width := 1;
+      ColorBmp.Canvas.Ellipse(IconW - DotSize - 1, IconH - DotSize - 1,
+        IconW - 1, IconH - 1);
+    end;
 
     // Monochrome mask: white is transparent, black is opaque.
     MaskBmp.SetSize(IconW, IconH);

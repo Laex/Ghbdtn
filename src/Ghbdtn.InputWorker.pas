@@ -15,6 +15,7 @@ type
     procedure RunWork(const AItem: TInputWorkItem);
     procedure ExecuteWordReplacement(const AItem: TInputWorkItem);
     procedure ExecuteSelectionReplacement(const AItem: TInputWorkItem);
+    procedure ExecuteReplaceBeforeCaret(const AItem: TInputWorkItem);
   protected
     procedure Execute; override;
   public
@@ -29,165 +30,28 @@ uses
   System.SysUtils,
   Winapi.UIAutomation,
   Ghbdtn.Analyzer,
+  Ghbdtn.CaretHint,
+  Ghbdtn.Clipboard,
   Ghbdtn.Fixer,
   Ghbdtn.Layout,
   Ghbdtn.Learning,
   Ghbdtn.Password,
   Ghbdtn.Hook,
   Ghbdtn.Sound,
+  Ghbdtn.Translit,
   Ghbdtn.Diagnostics,
   Ghbdtn.Settings;
 
 const
-  ClipboardRetryCount = 8;
-  ClipboardRetryDelayMs = 15;
   CopyPollMs = 8;
   CopyWaitMs = 45;
-  PasteSettleDelayMs = 16;
+  PasteSettleDelayMs = 80;
+  PasteProbeTimeoutMs = 250;
+  PasteHungDelayMs = 400;
+  ActivateWaitMs = 500;
+  ActivateSettleMs = 40;
   SelectionCopyAttempts = 3;
   MaxSelectionChars = 4096;
-  MaxSavedClipboardChars = 1 shl 20;
-
-function OpenClipboardWithRetry: Boolean;
-var
-  Attempt: Integer;
-begin
-  for Attempt := 1 to ClipboardRetryCount do
-  begin
-    if OpenClipboard(0) then
-      Exit(True);
-    Sleep(ClipboardRetryDelayMs);
-  end;
-  Result := False;
-end;
-
-function ClipboardHandleToString(Data: THandle; AMaxChars: NativeUInt;
-  out ATruncated: Boolean): string;
-var
-  Ptr: PWideChar;
-  Available: NativeUInt;
-  Len: NativeUInt;
-begin
-  Result := '';
-  ATruncated := False;
-  Ptr := GlobalLock(Data);
-  if Ptr = nil then
-    Exit;
-  try
-    Available := GlobalSize(Data) div SizeOf(WideChar);
-    if Available = 0 then
-      Exit;
-    if Available > AMaxChars + 1 then
-      Available := AMaxChars + 1;
-    Len := 0;
-    while (Len < Available) and (Ptr[Len] <> #0) do
-      Inc(Len);
-    if Len > AMaxChars then
-    begin
-      Len := AMaxChars;
-      ATruncated := True;
-    end;
-    SetString(Result, Ptr, Len);
-  finally
-    GlobalUnlock(Data);
-  end;
-end;
-
-{ ATruncated is set when the clipboard text is longer than AMaxChars. A
-  truncated selection must not be pasted back: the paste would replace the
-  whole selection with only its head. }
-function TryReadClipboardText(out AText: string; AMaxChars: NativeUInt;
-  out ATruncated: Boolean): Boolean;
-var
-  Attempt: Integer;
-  Data: THandle;
-begin
-  AText := '';
-  ATruncated := False;
-  for Attempt := 1 to ClipboardRetryCount do
-  begin
-    if OpenClipboardWithRetry then
-    try
-      Data := GetClipboardData(CF_UNICODETEXT);
-      if Data <> 0 then
-      begin
-        AText := ClipboardHandleToString(Data, AMaxChars, ATruncated);
-        if AText <> '' then
-          Exit(True);
-      end;
-    finally
-      CloseClipboard;
-    end;
-    Sleep(ClipboardRetryDelayMs);
-  end;
-  LogDiagnostic(dlError, deClipboardReadFailed);
-  Result := False;
-end;
-
-function TryWriteClipboardText(const AText: string): Boolean;
-var
-  Attempt: Integer;
-  Data: THandle;
-  Ptr: Pointer;
-  ByteCount: NativeUInt;
-  Text: string;
-begin
-  Text := AText;
-  for Attempt := 1 to ClipboardRetryCount do
-  begin
-    ByteCount := (Length(Text) + 1) * SizeOf(WideChar);
-    Data := GlobalAlloc(GMEM_MOVEABLE, ByteCount);
-    if Data = 0 then
-      Continue;
-    Ptr := GlobalLock(Data);
-    if Ptr = nil then
-    begin
-      GlobalFree(Data);
-      Continue;
-    end;
-    try
-      if Text <> '' then
-        Move(PWideChar(Text)^, Ptr^, ByteCount)
-      else
-        PWideChar(Ptr)^ := #0;
-    finally
-      GlobalUnlock(Data);
-    end;
-
-    if OpenClipboardWithRetry then
-    try
-      EmptyClipboard;
-      if SetClipboardData(CF_UNICODETEXT, Data) <> 0 then
-      begin
-        Data := 0;
-        Exit(True);
-      end;
-    finally
-      CloseClipboard;
-      if Data <> 0 then
-        GlobalFree(Data);
-    end
-    else
-      GlobalFree(Data);
-
-    Sleep(ClipboardRetryDelayMs);
-  end;
-  LogDiagnostic(dlError, deClipboardWriteFailed);
-  Result := False;
-end;
-
-function TryClearClipboard: Boolean;
-begin
-  Result := False;
-  if not OpenClipboardWithRetry then
-    Exit;
-  try
-    EmptyClipboard;
-    Result := True;
-  finally
-    CloseClipboard;
-  end;
-end;
 
 constructor TInputWorker.Create(AQueue: TInputQueue);
 begin
@@ -196,9 +60,19 @@ begin
   FQueue := AQueue;
 end;
 
-procedure TInputWorker.ExecuteWordReplacement(const AItem: TInputWorkItem);
+function IsItemCurrent(const AItem: TInputWorkItem): Boolean;
 begin
   if not IsTargetWindowValid(AItem.TargetWindow) then
+    Exit(False);
+  Result := IsWorkItemCurrent(AItem.TargetFocus, ForegroundFocusWindow,
+    AItem.EnqueuedTick, GetTickCount64);
+  if not Result then
+    LogDiagnostic(dlInfo, deStaleWorkDropped);
+end;
+
+procedure TInputWorker.ExecuteWordReplacement(const AItem: TInputWorkItem);
+begin
+  if not IsItemCurrent(AItem) then
     Exit;
   if not SendMarkedWordReplacement(AItem.OldWordLength, AItem.NewText,
     AItem.TrailingKey) then
@@ -211,6 +85,10 @@ begin
       HookManager.RememberCaseText(AItem.NewText);
     Exit;
   end;
+  if AItem.ToggleCapsLock and ((GetKeyState(VK_CAPITAL) and 1) <> 0) then
+    SendMarkedKeyPress(VK_CAPITAL);
+  if AItem.KeepLayout then
+    Exit;
   SwitchForegroundKeyboardLayout(AItem.TargetLang);
   if AItem.PlaySwitchSound then
     PlaySwitchBeep(AItem.TargetLang);
@@ -245,7 +123,7 @@ var
 begin
   Deadline := GetTickCount64 + CopyWaitMs;
   repeat
-    if TryReadClipboardText(AText, MaxSelectionChars, ATruncated) then
+    if TryPeekClipboardText(AText, MaxSelectionChars, ATruncated) then
       Exit(True);
     Sleep(CopyPollMs);
   until GetTickCount64 >= Deadline;
@@ -495,17 +373,93 @@ begin
     AppSettings.SaveToFile;
 end;
 
+{ The target application reads the clipboard some time after Ctrl+V is
+  delivered. A short settle delay plus a probe of its message loop keeps the
+  original content from being put back before the paste has been consumed. }
+procedure WaitForPasteConsumed(ATargetWindow: HWND);
+var
+  Reply: DWORD_PTR;
+begin
+  Sleep(PasteSettleDelayMs);
+  Reply := 0;
+  if SendMessageTimeout(ATargetWindow, WM_NULL, 0, 0,
+    SMTO_ABORTIFHUNG or SMTO_NORMAL, PasteProbeTimeoutMs, @Reply) = 0 then
+    Sleep(PasteHungDelayMs);
+end;
+
+{ The saved content is put back only while the clipboard still holds what this
+  program put there: its own sequence number, or the selection text that a
+  slow target copied after the wait ended. Anything else was placed by the
+  user or another program and is left alone. }
+procedure RestoreClipboardIfOwned(const ASnapshot: TClipboardSnapshot;
+  AOwnedSequence: DWORD; const ASelectedText, AConvertedText: string);
+begin
+  if (ClipboardSequence = AOwnedSequence) or
+     ((ASelectedText <> '') and ClipboardHoldsText(ASelectedText)) or
+     ((AConvertedText <> '') and ClipboardHoldsText(AConvertedText)) then
+    TryRestoreClipboard(ASnapshot);
+end;
+
+{ A command chosen from the tray menu starts with the menu's own window in
+  front; the text lives in the window that was active before. }
+procedure ActivateTargetWindow(ATarget: HWND);
+var
+  Deadline: UInt64;
+begin
+  if (ATarget = 0) or not IsWindow(ATarget) or
+     (GetForegroundWindow = ATarget) then
+    Exit;
+  SetForegroundWindow(ATarget);
+  Deadline := GetTickCount64 + ActivateWaitMs;
+  while (GetForegroundWindow <> ATarget) and (GetTickCount64 < Deadline) do
+    Sleep(10);
+  Sleep(ActivateSettleMs);
+end;
+
+{ The text a tray command produces: a transliteration or a case change. }
+function TransformCommandText(const AText: string;
+  const AItem: TInputWorkItem): string;
+begin
+  if AItem.Translit <> tdNone then
+    Result := ApplyTranslit(AText, AItem.Translit)
+  else
+    Result := ApplyCaseMode(AText, AItem.CaseMode);
+end;
+
+procedure NoteNothingToConvert(ATargetWindow: HWND);
+begin
+  if IsTargetWindowValid(ATargetWindow) then
+    ShowCaretNote('Нечего конвертировать');
+end;
+
+procedure NoteClipboardRefused(AResult: TClipboardCaptureResult);
+begin
+  case AResult of
+    ccTooLarge:
+      ShowCaretNote('Буфер обмена слишком большой');
+    ccUnsupported:
+      ShowCaretNote('Буфер обмена нельзя сохранить');
+  else
+    ShowCaretNote('Буфер обмена занят');
+  end;
+end;
+
 procedure TInputWorker.ExecuteSelectionReplacement(const AItem: TInputWorkItem);
 var
-  SavedClipboard: string;
+  Snapshot: TClipboardSnapshot;
+  CaptureResult: TClipboardCaptureResult;
+  OwnedSequence: DWORD;
+  ClipboardTouched: Boolean;
   SelectedText: string;
   ConvertedText: string;
   Attempt: Integer;
-  Copied, Truncated, SavedTruncated, Prepared: Boolean;
+  Copied, Truncated, Prepared: Boolean;
   TargetLang: TLangKind;
   Caret: TCaretRead;
 begin
-  if not IsTargetWindowValid(AItem.TargetWindow) then
+  if AItem.ActivateTarget then
+    ActivateTargetWindow(AItem.TargetWindow);
+  if not IsItemCurrent(AItem) then
     Exit;
 
   EnsureModifiersReleased;
@@ -514,11 +468,15 @@ begin
   if AItem.FromCaret and TryReadCaretText(AItem.TargetWindow, Caret) then
   begin
     if AItem.CaseCycle then
-      ConvertedText := InvertLetterCase(Caret.Text)
+      ConvertedText := TransformCommandText(Caret.Text, AItem)
     else
       ConvertedText := ConvertForProcess(AItem.LearningProcess, Caret.Text);
-    if (ConvertedText = '') or (ConvertedText = Caret.Text) or
-       not IsTargetWindowValid(AItem.TargetWindow) then
+    if (ConvertedText = '') or (ConvertedText = Caret.Text) then
+    begin
+      NoteNothingToConvert(AItem.TargetWindow);
+      Exit;
+    end;
+    if not IsTargetWindowValid(AItem.TargetWindow) then
       Exit;
     if SelectCaretRead(Caret) then
     begin
@@ -527,19 +485,25 @@ begin
     end;
   end;
 
-  SavedClipboard := '';
-  TryReadClipboardText(SavedClipboard, MaxSavedClipboardChars, SavedTruncated);
-  // The clipboard is cleared below, so text that cannot be restored in full
-  // must not be touched.
-  if SavedTruncated then
+  // The clipboard is replaced below, so content that cannot be put back in
+  // full must not be touched.
+  if not TryCaptureClipboard(Snapshot, CaptureResult) then
+  begin
+    NoteClipboardRefused(CaptureResult);
     Exit;
+  end;
 
+  ClipboardTouched := False;
+  OwnedSequence := 0;
   try
+    ClipboardTouched := True;
     if not TryClearClipboard then
     begin
       LogDiagnostic(dlError, deClipboardWriteFailed);
+      NoteClipboardRefused(ccUnavailable);
       Exit;
     end;
+    OwnedSequence := ClipboardSequence;
 
     if not Prepared then
     begin
@@ -552,35 +516,57 @@ begin
           Continue;
         Copied := WaitForClipboardText(SelectedText, Truncated);
         if Copied then
+        begin
+          OwnedSequence := ClipboardSequence;
           Break;
+        end;
       end;
 
       if not Copied then
       begin
         LogDiagnostic(dlError, deClipboardReadFailed);
+        if IsTargetWindowValid(AItem.TargetWindow) then
+          ShowCaretNote('Нет текста для конвертации');
         Exit;
       end;
       if Truncated then
+      begin
+        if IsTargetWindowValid(AItem.TargetWindow) then
+          ShowCaretNote('Выделение больше ' + IntToStr(MaxSelectionChars) +
+            ' символов');
         Exit;
+      end;
 
       if AItem.CaseCycle then
-        ConvertedText := InvertLetterCase(SelectedText)
+        ConvertedText := TransformCommandText(SelectedText, AItem)
       else
         ConvertedText := ConvertForProcess(AItem.LearningProcess, SelectedText);
-      if (ConvertedText = '') or (ConvertedText = SelectedText) or
-         not IsTargetWindowValid(AItem.TargetWindow) then
+      if (ConvertedText = '') or (ConvertedText = SelectedText) then
+      begin
+        NoteNothingToConvert(AItem.TargetWindow);
+        Exit;
+      end;
+      if not IsTargetWindowValid(AItem.TargetWindow) then
         Exit;
     end;
 
     if not TryWriteClipboardText(ConvertedText) then
       Exit;
+    OwnedSequence := ClipboardSequence;
     if not TryPasteClipboard(AItem.TargetWindow) then
       Exit;
-    Sleep(PasteSettleDelayMs);
+    WaitForPasteConsumed(AItem.TargetWindow);
     if AItem.CaseCycle then
     begin
       if HookManager <> nil then
-        HookManager.RememberCaseText(ConvertedText);
+      begin
+        // A case change is repeated by double Right Shift; a transliteration
+        // is taken back by double Left Shift.
+        if AItem.Translit = tdNone then
+          HookManager.RememberCaseText(ConvertedText)
+        else
+          HookManager.RememberSelectionConversion(SelectedText, ConvertedText);
+      end;
     end
     else
     begin
@@ -600,10 +586,94 @@ begin
       end;
     end;
   finally
-    if SavedClipboard <> '' then
-      TryWriteClipboardText(SavedClipboard)
-    else
-      TryClearClipboard;
+    if ClipboardTouched then
+      RestoreClipboardIfOwned(Snapshot, OwnedSequence, SelectedText,
+        ConvertedText);
+  end;
+end;
+
+{ Puts the text of the previous conversion back. The converted text is selected
+  backwards from the caret and read before it is replaced, so an edit made in
+  the meantime leaves the document untouched. }
+procedure TInputWorker.ExecuteReplaceBeforeCaret(const AItem: TInputWorkItem);
+var
+  Snapshot: TClipboardSnapshot;
+  CaptureResult: TClipboardCaptureResult;
+  OwnedSequence: DWORD;
+  ClipboardTouched, Copied, Truncated: Boolean;
+  Selected: string;
+  Attempt: Integer;
+  TargetLang: TLangKind;
+begin
+  if not IsItemCurrent(AItem) then
+    Exit;
+  EnsureModifiersReleased;
+  if not TryCaptureClipboard(Snapshot, CaptureResult) then
+  begin
+    NoteClipboardRefused(CaptureResult);
+    Exit;
+  end;
+
+  ClipboardTouched := False;
+  OwnedSequence := 0;
+  Selected := '';
+  try
+    ClipboardTouched := True;
+    if not TryClearClipboard then
+    begin
+      LogDiagnostic(dlError, deClipboardWriteFailed);
+      NoteClipboardRefused(ccUnavailable);
+      Exit;
+    end;
+    OwnedSequence := ClipboardSequence;
+    if not SendMarkedArrow(VK_LEFT, AItem.OldWordLength, True) then
+      Exit;
+    Copied := False;
+    Truncated := False;
+    for Attempt := 1 to SelectionCopyAttempts do
+    begin
+      if not TryCopySelection(AItem.TargetWindow) then
+        Continue;
+      Copied := WaitForClipboardText(Selected, Truncated);
+      if Copied then
+      begin
+        OwnedSequence := ClipboardSequence;
+        Break;
+      end;
+    end;
+    if not Copied or Truncated or
+       (NormalizeLineBreaks(Selected) <> NormalizeLineBreaks(AItem.ExpectedText)) then
+    begin
+      // Collapse the selection back to the caret and leave the text alone.
+      SendMarkedArrow(VK_RIGHT, 1, False);
+      if IsTargetWindowValid(AItem.TargetWindow) then
+        if AItem.SwitchLayoutAfter then
+          ShowCaretNote('Набранный текст не найден перед кареткой')
+        else
+          ShowCaretNote('Текст изменился, отмена невозможна');
+      Exit;
+    end;
+    if not TryWriteClipboardText(AItem.NewText) then
+      Exit;
+    OwnedSequence := ClipboardSequence;
+    if not TryPasteClipboard(AItem.TargetWindow) then
+      Exit;
+    WaitForPasteConsumed(AItem.TargetWindow);
+    if HookManager <> nil then
+      HookManager.RememberSelectionConversion(AItem.ExpectedText, AItem.NewText);
+    if AItem.SwitchLayoutAfter and AppSettings.SwitchLayoutAfterSelection then
+    begin
+      TargetLang := LayoutForConvertedText(AItem.NewText);
+      if (TargetLang <> lkUnknown) and IsTargetWindowValid(AItem.TargetWindow) then
+      begin
+        SwitchForegroundKeyboardLayout(TargetLang);
+        if AItem.PlaySwitchSound then
+          PlaySwitchBeep(TargetLang);
+      end;
+    end;
+  finally
+    if ClipboardTouched then
+      RestoreClipboardIfOwned(Snapshot, OwnedSequence, Selected, AItem.NewText);
   end;
 end;
 
@@ -625,6 +695,8 @@ begin
       ExecuteWordReplacement(AItem);
     iwReplaceSelection:
       ExecuteSelectionReplacement(AItem);
+    iwReplaceBeforeCaret:
+      ExecuteReplaceBeforeCaret(AItem);
     iwSwitchLayout:
       if IsTargetWindowValid(AItem.TargetWindow) then
       begin

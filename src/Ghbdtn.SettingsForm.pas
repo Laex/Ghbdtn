@@ -32,6 +32,11 @@ type
     FDoubleShift: TCheckBox;
     FSelectionLayout: TCheckBox;
     FAutoStart: TCheckBox;
+    FFixCaps: TCheckBox;
+    FFixCapsLock: TCheckBox;
+    FPauseFullscreen: TCheckBox;
+    FEnglishSecure: TCheckBox;
+    FDoubleCtrl: TCheckBox;
     FHintFlash: TCheckBox;
     FHintAnimate: TCheckBox;
     FMode: TRadioGroup;
@@ -612,7 +617,7 @@ begin
   BorderStyle := bsDialog;
   Position := poScreenCenter;
   ClientWidth := 460;
-  ClientHeight := 592;
+  ClientHeight := 712;
   Font.Name := 'Segoe UI';
   Font.Height := -12;
 
@@ -623,12 +628,22 @@ begin
   FSelectionLayout := MakeCheck(Self,
     'Менять раскладку после конвертации выделения', 16, 112, 420);
   FAutoStart := MakeCheck(Self, 'Автозапуск', 16, 136, 420);
+  FFixCaps := MakeCheck(Self,
+    'Исправлять две заглавные в начале слова (ТОлько -> Только)', 16, 160, 420);
+  FFixCapsLock := MakeCheck(Self,
+    'Исправлять слово, набранное с Caps Lock (пРИВЕТ -> Привет)', 16, 184, 420);
+  FPauseFullscreen := MakeCheck(Self,
+    'Не вмешиваться в полноэкранных приложениях', 16, 208, 420);
+  FEnglishSecure := MakeCheck(Self,
+    'Английская раскладка в полях пароля и e-mail', 16, 232, 420);
+  FDoubleCtrl := MakeCheck(Self,
+    'Двойной Ctrl: конвертировать набранную строку', 16, 256, 420);
 
   FMode := TRadioGroup.Create(Self);
   FMode.Parent := Self;
   FMode.Caption := 'Эвристика';
   FMode.Left := 16;
-  FMode.Top := 168;
+  FMode.Top := 288;
   FMode.Width := 428;
   FMode.Height := 78;
   FMode.Items.Add('Осторожный');
@@ -639,21 +654,21 @@ begin
   FHintMode.Parent := Self;
   FHintMode.Caption := 'Подсказка у каретки';
   FHintMode.Left := 16;
-  FHintMode.Top := 254;
+  FHintMode.Top := 374;
   FHintMode.Width := 428;
   FHintMode.Height := 78;
   FHintMode.Items.Add('На время');
   FHintMode.Items.Add('Следовать за кареткой');
   FHintMode.Items.Add('Не показывать');
 
-  FHintFlash := MakeCheck(Self, 'Вспышка при появлении', 28, 338, 190);
-  FHintAnimate := MakeCheck(Self, 'Анимация размера', 230, 338, 190);
+  FHintFlash := MakeCheck(Self, 'Вспышка при появлении', 28, 458, 190);
+  FHintAnimate := MakeCheck(Self, 'Анимация размера', 230, 458, 190);
 
   FDiagnostics := TRadioGroup.Create(Self);
   FDiagnostics.Parent := Self;
   FDiagnostics.Caption := 'Диагностика';
   FDiagnostics.Left := 16;
-  FDiagnostics.Top := 366;
+  FDiagnostics.Top := 486;
   FDiagnostics.Width := 428;
   FDiagnostics.Height := 96;
   FDiagnostics.Columns := 2;
@@ -730,6 +745,11 @@ begin
   FDoubleShift.Width := ClientWidth - 40;
   FSelectionLayout.Width := ClientWidth - 40;
   FAutoStart.Width := ClientWidth - 40;
+  FFixCaps.Width := ClientWidth - 40;
+  FFixCapsLock.Width := ClientWidth - 40;
+  FPauseFullscreen.Width := ClientWidth - 40;
+  FEnglishSecure.Width := ClientWidth - 40;
+  FDoubleCtrl.Width := ClientWidth - 40;
 
   ButtonTop := ClientHeight - 16 - ResetLearning.Height;
   LearningList.SetBounds(16, ButtonTop - 36, LearningList.Width, LearningList.Height);
@@ -756,6 +776,11 @@ begin
   FDoubleShift.Checked := AppSettings.DoubleLeftShiftEnabled;
   FSelectionLayout.Checked := AppSettings.SwitchLayoutAfterSelection;
   FAutoStart.Checked := AppSettings.AutoStart;
+  FFixCaps.Checked := AppSettings.FixInitialCaps;
+  FFixCapsLock.Checked := AppSettings.FixCapsLock;
+  FPauseFullscreen.Checked := AppSettings.PauseInFullscreen;
+  FEnglishSecure.Checked := AppSettings.EnglishInSecureFields;
+  FDoubleCtrl.Checked := AppSettings.DoubleCtrlEnabled;
   FHintFlash.Checked := AppSettings.CaretHintFlash;
   FHintAnimate.Checked := AppSettings.CaretHintAnimate;
   FMode.ItemIndex := Ord(AppSettings.HeuristicMode);
@@ -771,6 +796,11 @@ begin
   AppSettings.DoubleLeftShiftEnabled := FDoubleShift.Checked;
   AppSettings.SwitchLayoutAfterSelection := FSelectionLayout.Checked;
   AppSettings.AutoStart := FAutoStart.Checked;
+  AppSettings.FixInitialCaps := FFixCaps.Checked;
+  AppSettings.FixCapsLock := FFixCapsLock.Checked;
+  AppSettings.PauseInFullscreen := FPauseFullscreen.Checked;
+  AppSettings.EnglishInSecureFields := FEnglishSecure.Checked;
+  AppSettings.DoubleCtrlEnabled := FDoubleCtrl.Checked;
   AppSettings.CaretHintFlash := FHintFlash.Checked;
   AppSettings.CaretHintAnimate := FHintAnimate.Checked;
   if FMode.ItemIndex >= 0 then

@@ -13,6 +13,8 @@ const
 function IsOwnInput(AExtraInfo: ULONG_PTR): Boolean;
 function IsInjectingInput: Boolean;
 function IsTargetWindowValid(ATargetWindow: HWND): Boolean;
+{ The control that has the keyboard focus in the foreground window, or 0. }
+function ForegroundFocusWindow: HWND;
 
 var
   PauseKeyboardHook: procedure;
@@ -22,6 +24,9 @@ function EnsureModifiersReleased: Boolean;
 function SendMarkedKey(AVirtualKey: Word; AKeyUp: Boolean = False;
   AScanCode: Word = 0; AFlags: DWORD = 0): Boolean;
 function SendMarkedKeyPress(AVirtualKey: Word): Boolean;
+{ Presses an arrow key ACount times, with Shift held to extend a selection. }
+function SendMarkedArrow(AVirtualKey: Word; ACount: Integer;
+  AWithShift: Boolean): Boolean;
 function SendMarkedShortcut(AModifier, AKey: Word): Boolean;
 function SendMarkedUnicode(const AText: string): Boolean;
 function SendMarkedBackspaces(ACount: Integer): Boolean;
@@ -57,6 +62,23 @@ function IsTargetWindowValid(ATargetWindow: HWND): Boolean;
 begin
   Result := (ATargetWindow <> 0) and IsWindow(ATargetWindow) and
     (GetForegroundWindow = ATargetWindow);
+end;
+
+function ForegroundFocusWindow: HWND;
+var
+  Info: TGUIThreadInfo;
+  Foreground: HWND;
+  ThreadId: DWORD;
+begin
+  Result := 0;
+  Foreground := GetForegroundWindow;
+  if Foreground = 0 then
+    Exit;
+  ThreadId := GetWindowThreadProcessId(Foreground, nil);
+  ZeroMemory(@Info, SizeOf(Info));
+  Info.cbSize := SizeOf(Info);
+  if GetGUIThreadInfo(ThreadId, Info) then
+    Result := Info.hwndFocus;
 end;
 
 function ResolveInputTargetWindow(AForegroundWindow: HWND): HWND;
@@ -137,6 +159,44 @@ begin
     SendMarkedKey(VK_MENU, True);
     Sleep(ModifierReleaseDelayMs);
   end;
+end;
+
+function SendMarkedArrow(AVirtualKey: Word; ACount: Integer;
+  AWithShift: Boolean): Boolean;
+const
+  ArrowChunk = 256;
+var
+  Inputs: TArray<TInput>;
+  Done, Count, I, Index: Integer;
+begin
+  Result := True;
+  if ACount <= 0 then
+    Exit;
+  if AWithShift then
+    Result := SendMarkedKey(VK_SHIFT);
+  Done := 0;
+  while Result and (Done < ACount) do
+  begin
+    Count := ACount - Done;
+    if Count > ArrowChunk then
+      Count := ArrowChunk;
+    SetLength(Inputs, Count * 2);
+    ZeroMemory(@Inputs[0], Length(Inputs) * SizeOf(TInput));
+    for I := 0 to Count - 1 do
+    begin
+      Index := I * 2;
+      Inputs[Index].Itype := INPUT_KEYBOARD;
+      Inputs[Index].ki.wVk := AVirtualKey;
+      Inputs[Index].ki.dwFlags := KEYEVENTF_EXTENDEDKEY;
+      Inputs[Index].ki.dwExtraInfo := GHBDTN_INPUT_SIGNATURE;
+      Inputs[Index + 1] := Inputs[Index];
+      Inputs[Index + 1].ki.dwFlags := KEYEVENTF_EXTENDEDKEY or KEYEVENTF_KEYUP;
+    end;
+    Result := SendInputsWithRetry(Inputs);
+    Inc(Done, Count);
+  end;
+  if AWithShift then
+    SendMarkedKey(VK_SHIFT, True);
 end;
 
 function SendMarkedKeyPress(AVirtualKey: Word): Boolean;

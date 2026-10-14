@@ -5,8 +5,11 @@ interface
 uses
   Winapi.Windows,
   System.SysUtils,
+  Ghbdtn.Analyzer,
   Ghbdtn.Layout,
+  Ghbdtn.Translit,
   Ghbdtn.Buffer,
+  Ghbdtn.FieldWatch,
   Ghbdtn.KeyState,
   Ghbdtn.InputQueue,
   Ghbdtn.InputWorker,
@@ -74,7 +77,22 @@ type
     FQuestionFixPending: Boolean;
     FAwaitQuestionSpace: Boolean;
     FConsumedDelimiterVK: Word;
+    FCaseFixOriginal: string;
+    FCaseFixShown: string;
+    FCaseFixTrailingVK: Word;
+    FCaseFixTick: UInt64;
+    FIgnoredTapTick: UInt64;
+    FLineText: string;
+    FCtrlDown: Boolean;
+    FCtrlClean: Boolean;
+    FCtrlDownTick: UInt64;
+    FCtrlTapTick: UInt64;
+    FIgnoredShiftClean: Boolean;
+    FFullscreenCheckTick: UInt64;
+    FFullscreenPaused: Boolean;
+    FFieldWatcher: TFieldWatcher;
     FGloballyPaused: Boolean;
+    FPauseUntil: UInt64;
     FPauseKeyDown: Boolean;
     FMouseDown: Boolean;
     FMouseDragged: Boolean;
@@ -92,8 +110,15 @@ type
     procedure HandleSelectionLeftShift(ATransition: TLeftShiftTransition);
     procedure HandleSoloLeftShift(ATransition: TLeftShiftTransition);
     procedure IgnoreLeftShiftWhileDisabled(AIsKeyDown, AIsKeyUp: Boolean);
+    procedure NoteIgnoredKey(AVirtualKey: DWORD; AIsKeyDown,
+      AIsKeyUp: Boolean; const AReason: string);
     procedure TrackCapturedInput(const AInput: TQueuedInput);
     procedure HandleExplicitUndo;
+    procedure ClearCaseFix;
+    procedure RejectCaseFix;
+    function TryUndoCaseFix(out AItem: TInputWorkItem): Boolean;
+    function TryQueueCaseFix(const AWord: string; APunctuation: Char;
+      AVKCode: DWORD; AQuestionArmed: Boolean): Boolean;
     procedure HandleLeftShiftEvent(AIsKeyDown, AIsKeyUp: Boolean);
     procedure HandleRightShiftEvent(AIsKeyDown, AIsKeyUp: Boolean);
     procedure HandleDoubleRightShift;
@@ -101,10 +126,22 @@ type
     function TakeSelectionUndo(out AOriginal, AConverted: string): Boolean;
     function ReadCaseText: string;
     procedure HandleBackspace;
+    function HandleWordDelimiterCore(ALang: TLangKind; VKCode: DWORD;
+      APunctuation: Char): Boolean;
     function HandleWordDelimiter(ALang: TLangKind; VKCode: DWORD;
       APunctuation: Char): Boolean;
+    procedure LineAppend(AChar: Char);
+    procedure LineReplaceTail(AOldLength: Integer; const ANewText: string);
+    procedure NoteLineDelimiter(AVKCode: DWORD; APunctuation: Char);
+    procedure TrackCtrlTap(AIsKeyDown, AIsKeyUp: Boolean);
+    procedure HandleDoubleCtrl;
     procedure HandlePrintableKey(VKCode: DWORD; ALang: TLangKind);
     function CurrentApplicationEnabled: Boolean;
+    function IsFullscreenPaused: Boolean;
+    procedure QueueTextCommand(AMode: TCaseMode;
+      ATranslit: TTranslitDirection);
+    procedure SecureFieldEntered(AKind: TSecureFieldKind);
+    function IgnoredReason: string;
     function GetProcessNameForWindow(AWindow: HWND): string;
     procedure EnqueueWork(const AItem: TInputWorkItem);
     procedure QueueLearningSave(const AWord: string; AAction: TLearningAction);
@@ -131,8 +168,14 @@ type
     procedure AddCurrentApplicationToExclusions;
     function IsGloballyPaused: Boolean;
     procedure ToggleGlobalPause;
+    { AMinutes = 0 pauses until resumed by hand or until the restart. }
+    procedure PauseForMinutes(AMinutes: Integer);
+    { -1: paused with no end, 0: not paused, otherwise whole minutes left. }
+    function PauseMinutesRemaining: Integer;
     function CurrentLearningProcess: string;
     procedure RememberCaseText(const AText: string);
+    procedure RunCaseCommand(AMode: TCaseMode);
+    procedure RunTranslitCommand(ADirection: TTranslitDirection);
     procedure RememberSelectionConversion(const AOriginal, AConverted: string);
     property OnLangChange: TLangChangeEvent read FOnLangChange write FOnLangChange;
   end;
@@ -144,9 +187,10 @@ implementation
 
 uses
   Winapi.Messages,
+  System.Character,
   System.Classes,
-  Ghbdtn.Analyzer,
   Ghbdtn.CaretHint,
+  Ghbdtn.Fullscreen,
   Ghbdtn.Fixer,
   Ghbdtn.Sound,
   Ghbdtn.Diagnostics,
@@ -155,12 +199,15 @@ uses
 const
   LeftShiftMinInterval = 0;
   LeftShiftMaxInterval = 650;
+  CtrlTapMaxHoldMs = 400;
+  MaxLineChars = 512;
+  FullscreenCheckMs = 500;
   SelectionArmWindowMs = 4000;
   MouseDragSlop = 4;
   LowLevelHookExtended = $01;
   LowLevelHookUp = $80;
   LearningUndoWindowMs = 3000;
-  MaxSelectionUndoChars = 512;
+  MaxSelectionUndoChars = 4096;
   LessonNone = 0;
   LessonWeakReject = 1;
   LessonStrongReject = 2;
@@ -216,6 +263,12 @@ begin
   FQueue := TInputQueue.Create;
   FWorker := TInputWorker.Create(FQueue);
   FWorker.Start;
+  FFieldWatcher := TFieldWatcher.Create(
+    procedure(AKind: TSecureFieldKind)
+    begin
+      SecureFieldEntered(AKind);
+    end);
+  FFieldWatcher.Start;
   FLastLang := lkUnknown;
   FLastHKL := 0;
 end;
@@ -223,6 +276,10 @@ end;
 destructor TKbdHookManager.Destroy;
 begin
   StopHook;
+  FFieldWatcher.Terminate;
+  FFieldWatcher.WaitFor;
+  TThread.RemoveQueuedEvents(FFieldWatcher);
+  FFieldWatcher.Free;
   FQueue.Stop;
   FWorker.WaitFor;
   FWorker.Free;
@@ -302,6 +359,7 @@ end;
 
 procedure TKbdHookManager.ClearLastConversion;
 begin
+  ClearCaseFix;
   FLastConvertedText := '';
   FLastConvertedLen := 0;
   FLastConversionTick := 0;
@@ -311,9 +369,109 @@ begin
   FPendingPhraseLang := lkUnknown;
 end;
 
+procedure TKbdHookManager.ClearCaseFix;
+begin
+  FCaseFixOriginal := '';
+  FCaseFixShown := '';
+  FCaseFixTrailingVK := 0;
+  FCaseFixTick := 0;
+end;
+
+procedure TKbdHookManager.RejectCaseFix;
+var
+  Item: TInputWorkItem;
+begin
+  if (FCaseFixOriginal = '') or
+     not IsWithinLearningWindow(FCaseFixTick, GetTickCount64,
+       LearningUndoWindowMs) then
+  begin
+    ClearCaseFix;
+    Exit;
+  end;
+  AppSettings.KeepCaseFixWord(FCaseFixOriginal);
+  ClearCaseFix;
+  FillChar(Item, SizeOf(Item), 0);
+  Item.Kind := iwPersistSettings;
+  EnqueueWork(Item);
+end;
+
+function TKbdHookManager.TryUndoCaseFix(out AItem: TInputWorkItem): Boolean;
+begin
+  Result := (FCaseFixOriginal <> '') and
+    IsWithinLearningWindow(FCaseFixTick, GetTickCount64,
+      LearningUndoWindowMs);
+  if not Result then
+    Exit;
+  FillChar(AItem, SizeOf(AItem), 0);
+  AItem.Kind := iwReplaceWord;
+  AItem.TargetWindow := GetForegroundWindow;
+  AItem.KeepLayout := True;
+  AItem.OldWordLength := Length(FCaseFixShown);
+  AItem.NewText := FCaseFixOriginal;
+  if FCaseFixTrailingVK <> 0 then
+  begin
+    Inc(AItem.OldWordLength);
+    AItem.TrailingKey := FCaseFixTrailingVK;
+  end
+  else
+    AItem.NewText := AItem.NewText + FCaseFixShown[Length(FCaseFixShown)];
+  RejectCaseFix;
+end;
+
+function TKbdHookManager.TryQueueCaseFix(const AWord: string;
+  APunctuation: Char; AVKCode: DWORD; AQuestionArmed: Boolean): Boolean;
+var
+  Fixed: string;
+  Item: TInputWorkItem;
+  FromCapsLock: Boolean;
+begin
+  Result := False;
+  if AQuestionArmed then
+    Exit;
+  FromCapsLock := False;
+  if not (AppSettings.FixInitialCaps and TryFixInitialCapitals(AWord, Fixed)) then
+  begin
+    FromCapsLock := AppSettings.FixCapsLock and
+      ((GetKeyState(VK_CAPITAL) and 1) <> 0) and
+      TryFixCapsLockWord(AWord, Fixed);
+    if not FromCapsLock then
+      Exit;
+  end;
+  if AppSettings.IsCaseFixKept(Fixed) then
+    Exit;
+  FillChar(Item, SizeOf(Item), 0);
+  Item.Kind := iwReplaceWord;
+  Item.TargetWindow := GetForegroundWindow;
+  Item.OldWordLength := Length(AWord);
+  Item.NewText := Fixed;
+  Item.KeepLayout := True;
+  Item.ToggleCapsLock := FromCapsLock;
+  LineReplaceTail(Length(AWord), Fixed);
+  FCaseFixOriginal := AWord;
+  FCaseFixTick := GetTickCount64;
+  if APunctuation <> #0 then
+  begin
+    Item.NewText := Item.NewText + APunctuation;
+    FConsumedDelimiterVK := Word(AVKCode);
+    FCaseFixShown := Item.NewText;
+    FCaseFixTrailingVK := 0;
+  end
+  else
+  begin
+    Item.TrailingKey := Word(AVKCode);
+    FCaseFixShown := Fixed;
+    FCaseFixTrailingVK := Word(AVKCode);
+  end;
+  EnqueueWork(Item);
+  Result := True;
+end;
+
 procedure TKbdHookManager.ResetContext;
 begin
   FInputBuffer.Clear;
+  FLineText := '';
+  FCtrlClean := False;
+  FCtrlTapTick := 0;
   ClearLastConversion;
   FBackspaceRun := 0;
   FPendingDoubleShift := False;
@@ -370,11 +528,8 @@ end;
 procedure TKbdHookManager.RememberSelectionConversion(const AOriginal,
   AConverted: string);
 begin
-  // Only single-line text is erased and retyped to undo the conversion;
-  // line breaks do not map one-to-one to Backspace presses.
   if (AOriginal = '') or (AConverted = '') or
-     (Length(AConverted) > MaxSelectionUndoChars) or
-     (Pos(#10, AConverted) > 0) or (Pos(#13, AConverted) > 0) then
+     (Length(AConverted) > MaxSelectionUndoChars) then
   begin
     ClearLastCase;
     Exit;
@@ -506,8 +661,31 @@ end;
 procedure TKbdHookManager.ToggleGlobalPause;
 begin
   FGloballyPaused := not FGloballyPaused;
+  FPauseUntil := 0;
   FPhrase := EmptyPhrase;
   ResetContext;
+end;
+
+procedure TKbdHookManager.PauseForMinutes(AMinutes: Integer);
+begin
+  FGloballyPaused := True;
+  if AMinutes > 0 then
+    FPauseUntil := GetTickCount64 + UInt64(AMinutes) * 60000
+  else
+    FPauseUntil := 0;
+  FPhrase := EmptyPhrase;
+  ResetContext;
+end;
+
+function TKbdHookManager.PauseMinutesRemaining: Integer;
+begin
+  if not FGloballyPaused then
+    Exit(0);
+  if FPauseUntil = 0 then
+    Exit(-1);
+  Result := PauseMinutesLeft(FPauseUntil, GetTickCount64);
+  if Result = 0 then
+    Result := 1;
 end;
 
 function TKbdHookManager.CurrentLearningProcess: string;
@@ -526,6 +704,15 @@ var
   Profile: TApplicationProfile;
   WindowChanged: Boolean;
 begin
+  if FGloballyPaused and (FPauseUntil <> 0) and
+     (GetTickCount64 >= FPauseUntil) then
+  begin
+    FGloballyPaused := False;
+    FPauseUntil := 0;
+    FPhrase := EmptyPhrase;
+    ResetContext;
+    ShowCaretNote('Слежение возобновлено');
+  end;
   CurrentWindow := GetForegroundWindow;
   WindowChanged := CurrentWindow <> FLastWindow;
   if WindowChanged then
@@ -583,11 +770,62 @@ begin
   end;
 end;
 
+function TKbdHookManager.IsFullscreenPaused: Boolean;
+var
+  Tick: UInt64;
+begin
+  if not AppSettings.PauseInFullscreen then
+    Exit(False);
+  // The shell query is cheap but runs on every key; the answer is reused for
+  // a short while.
+  Tick := GetTickCount64;
+  if (FFullscreenCheckTick = 0) or (Tick - FFullscreenCheckTick > FullscreenCheckMs) then
+  begin
+    FFullscreenPaused := IsForegroundFullscreen;
+    FFullscreenCheckTick := Tick;
+  end;
+  Result := FFullscreenPaused;
+end;
+
+{ Focus moved into a password or an e-mail field: those take Latin text, so a
+  Russian layout is switched to English. Nothing is typed or read. }
+procedure TKbdHookManager.SecureFieldEntered(AKind: TSecureFieldKind);
+var
+  Item: TInputWorkItem;
+  Profile: TApplicationProfile;
+begin
+  if FGloballyPaused or not AppSettings.EnglishInSecureFields or
+     not FWindowContextReady or IsFullscreenPaused then
+    Exit;
+  if AppSettings.IsProcessExcluded(FCurrentProcess) then
+    Exit;
+  Profile := CurrentProfile;
+  if not Profile.AutoSwitchEnabled then
+    Exit;
+  if GetForegroundLangKind <> lkRU then
+    Exit;
+  FillChar(Item, SizeOf(Item), 0);
+  Item.Kind := iwSwitchLayout;
+  Item.TargetWindow := GetForegroundWindow;
+  Item.TargetLang := lkEN;
+  Item.PlaySwitchSound := Profile.SoundOnSwitch;
+  EnqueueWork(Item);
+end;
+
+function TKbdHookManager.IgnoredReason: string;
+begin
+  if IsFullscreenPaused then
+    Result := 'Полноэкранный режим'
+  else
+    Result := 'Для приложения отключено';
+end;
+
 function TKbdHookManager.CurrentApplicationEnabled: Boolean;
 begin
   Result := FWindowContextReady and
     not AppSettings.IsProcessExcluded(FCurrentProcess) and
-    not SameText(FCurrentProcess, FTemporarilyDisabledProcess);
+    not SameText(FCurrentProcess, FTemporarilyDisabledProcess) and
+    not IsFullscreenPaused;
 end;
 
 function TKbdHookManager.CurrentProfile: TApplicationProfile;
@@ -645,10 +883,20 @@ begin
 end;
 
 procedure TKbdHookManager.EnqueueWork(const AItem: TInputWorkItem);
+var
+  Item: TInputWorkItem;
 begin
-  if AItem.Kind in [iwReplaceWord, iwReplaceSelection, iwSwitchLayout] then
+  Item := AItem;
+  if Item.Kind in [iwReplaceWord, iwReplaceSelection, iwReplaceBeforeCaret,
+    iwSwitchLayout] then
     FSuppressLayoutSoundUntil := GetTickCount64 + 500;
-  FQueue.EnqueueWork(AItem);
+  if Item.Kind in [iwReplaceWord, iwReplaceSelection, iwReplaceBeforeCaret] then
+  begin
+    if not Item.ActivateTarget then
+      Item.TargetFocus := ForegroundFocusWindow;
+    Item.EnqueuedTick := GetTickCount64;
+  end;
+  FQueue.EnqueueWork(Item);
 end;
 
 procedure TKbdHookManager.QueueLearningSave(const AWord: string;
@@ -808,6 +1056,15 @@ begin
     end;
     FInputBuffer.Clear;
   end
+  else if TryUndoCaseFix(Item) then
+  begin
+    // Original capitalization restored; the word is not corrected again.
+    FSelectionArmed := False;
+    FSelectionArmedTick := 0;
+    ResetShiftGestureState;
+    EnqueueWork(Item);
+    Exit;
+  end
   else if FLastConvertedText <> '' then
   begin
     Item.Kind := iwReplaceWord;
@@ -821,13 +1078,13 @@ begin
   begin
     // Undo of the previous selection or caret-word conversion; a further
     // double Left Shift converts the text again.
-    Item.Kind := iwReplaceWord;
-    Item.OldWordLength := Length(UndoConverted);
+    Item.Kind := iwReplaceBeforeCaret;
+    Item.OldWordLength := CaretStepCount(UndoConverted);
     Item.NewText := UndoOriginal;
+    Item.ExpectedText := UndoConverted;
     Item.TargetLang := CurrentLang;
     Item.PlaySwitchSound := False;
     ClearLastConversion;
-    RememberSelectionConversion(UndoConverted, UndoOriginal);
   end
   else
   begin
@@ -964,6 +1221,73 @@ begin
   FShiftUsedAsModifier := False;
   FShiftTapCount := 0;
   FLastLShiftTime := 0;
+end;
+
+{ A double Left Shift where the program is switched off (an excluded
+  application, a password field) does nothing. The message tells the user why. }
+procedure TKbdHookManager.NoteIgnoredKey(AVirtualKey: DWORD; AIsKeyDown,
+  AIsKeyUp: Boolean; const AReason: string);
+var
+  Tick: UInt64;
+begin
+  if AVirtualKey <> VK_LSHIFT then
+  begin
+    if AIsKeyDown then
+    begin
+      FIgnoredShiftClean := False;
+      FIgnoredTapTick := 0;
+    end;
+    Exit;
+  end;
+  if AIsKeyDown then
+  begin
+    FIgnoredShiftClean := True;
+    Exit;
+  end;
+  if not AIsKeyUp or not FIgnoredShiftClean then
+    Exit;
+  FIgnoredShiftClean := False;
+  Tick := GetTickCount64;
+  if (FIgnoredTapTick <> 0) and
+     (Tick - FIgnoredTapTick <= LeftShiftMaxInterval) then
+  begin
+    FIgnoredTapTick := 0;
+    ShowCaretNote(AReason);
+  end
+  else
+    FIgnoredTapTick := Tick;
+end;
+
+{ Changes the case of the selection, or of the word at the caret, in the
+  window that was active before the tray menu opened. }
+procedure TKbdHookManager.QueueTextCommand(AMode: TCaseMode;
+  ATranslit: TTranslitDirection);
+var
+  Item: TInputWorkItem;
+begin
+  if (FLastExternalProcess = '') or not IsWindow(FLastExternalWindow) then
+    Exit;
+  FillChar(Item, SizeOf(Item), 0);
+  Item.Kind := iwReplaceSelection;
+  Item.FromCaret := True;
+  Item.CaseCycle := True;
+  Item.CaseMode := AMode;
+  Item.Translit := ATranslit;
+  Item.TargetWindow := FLastExternalWindow;
+  Item.ActivateTarget := True;
+  Item.LearningProcess := FLastExternalProcess;
+  ResetContext;
+  EnqueueWork(Item);
+end;
+
+procedure TKbdHookManager.RunCaseCommand(AMode: TCaseMode);
+begin
+  QueueTextCommand(AMode, tdNone);
+end;
+
+procedure TKbdHookManager.RunTranslitCommand(ADirection: TTranslitDirection);
+begin
+  QueueTextCommand(cmInvert, ADirection);
 end;
 
 procedure TKbdHookManager.HandleDoubleRightShift;
@@ -1107,6 +1431,9 @@ var
   TrackingConversion: Boolean;
 begin
   ClearLastCase;
+  ClearCaseFix;
+  if FLineText <> '' then
+    Delete(FLineText, Length(FLineText), 1);
   FInputBuffer.RemoveLastChar;
   Inc(FBackspaceRun);
   FQuestionFixPending := False;
@@ -1195,7 +1522,7 @@ begin
   end;
 end;
 
-function TKbdHookManager.HandleWordDelimiter(ALang: TLangKind;
+function TKbdHookManager.HandleWordDelimiterCore(ALang: TLangKind;
   VKCode: DWORD; APunctuation: Char): Boolean;
 var
   Analysis: TAnalysisResult;
@@ -1210,6 +1537,13 @@ begin
   Result := False;
   if FInputBuffer.IsEmpty then
   begin
+    // Another delimiter after a correction or a selection conversion: the
+    // text it would undo is no longer right before the caret.
+    ClearLastCase;
+    if FLastConvertedText <> '' then
+      NoteConversionKept
+    else
+      ClearCaseFix;
     if (APunctuation = #0) and FAwaitQuestionSpace then
     begin
       FQuestionFixPending := True;
@@ -1302,6 +1636,7 @@ begin
         FLastConvertedText := Analysis.ConvertedText;
         FLastConvertedLen := Length(Analysis.ConvertedText);
       end;
+      LineReplaceTail(Length(MarkerText), Analysis.ConvertedText);
       FLastConversionTick := GetTickCount64;
       FLastTypedWord := MarkerText;
       FConversionLesson := LessonNone;
@@ -1316,6 +1651,9 @@ begin
       RememberCommittedWord(ALang, MarkerText);
       if (APunctuation = '?') and IsEnglishQuestionMarker(MarkerText + '?') then
         FAwaitQuestionSpace := True;
+      if ((ALang <> lkEN) or not CharInSet(APunctuation, [',', '.', '?', '/'])) and
+         TryQueueCaseFix(MarkerText, APunctuation, VKCode, QuestionArmed) then
+        Result := True;
     end;
   end
   else
@@ -1337,6 +1675,151 @@ begin
   FBackspaceRun := 0;
 end;
 
+function TKbdHookManager.HandleWordDelimiter(ALang: TLangKind;
+  VKCode: DWORD; APunctuation: Char): Boolean;
+begin
+  Result := HandleWordDelimiterCore(ALang, VKCode, APunctuation);
+  NoteLineDelimiter(VKCode, APunctuation);
+end;
+
+{ FLineText is what was typed since the caret last moved. The double Ctrl
+  gesture converts it; the worker checks it against the text in the editor
+  before replacing anything, so a line that drifted from the screen is left
+  alone. }
+procedure TKbdHookManager.LineAppend(AChar: Char);
+begin
+  FLineText := FLineText + AChar;
+  if Length(FLineText) > MaxLineChars then
+    Delete(FLineText, 1, Length(FLineText) - MaxLineChars);
+end;
+
+procedure TKbdHookManager.LineReplaceTail(AOldLength: Integer;
+  const ANewText: string);
+begin
+  if (AOldLength < 0) or (AOldLength > Length(FLineText)) then
+  begin
+    FLineText := '';
+    Exit;
+  end;
+  Delete(FLineText, Length(FLineText) - AOldLength + 1, AOldLength);
+  FLineText := FLineText + ANewText;
+end;
+
+procedure TKbdHookManager.NoteLineDelimiter(AVKCode: DWORD;
+  APunctuation: Char);
+begin
+  if AVKCode in [VK_RETURN, VK_TAB] then
+    FLineText := ''
+  else if APunctuation <> #0 then
+    LineAppend(APunctuation)
+  else if AVKCode = VK_SPACE then
+    LineAppend(' ');
+end;
+
+procedure TKbdHookManager.TrackCtrlTap(AIsKeyDown, AIsKeyUp: Boolean);
+var
+  Tick: UInt64;
+begin
+  Tick := GetTickCount64;
+  if AIsKeyDown then
+  begin
+    if not FCtrlDown then
+    begin
+      FCtrlDown := True;
+      FCtrlClean := True;
+      FCtrlDownTick := Tick;
+    end;
+    Exit;
+  end;
+  if not AIsKeyUp then
+    Exit;
+  FCtrlDown := False;
+  if (not FCtrlClean) or (Tick - FCtrlDownTick > CtrlTapMaxHoldMs) then
+  begin
+    FCtrlClean := False;
+    FCtrlTapTick := 0;
+    Exit;
+  end;
+  FCtrlClean := False;
+  if (FCtrlTapTick <> 0) and (Tick - FCtrlTapTick <= LeftShiftMaxInterval) then
+  begin
+    FCtrlTapTick := 0;
+    HandleDoubleCtrl;
+  end
+  else
+    FCtrlTapTick := Tick;
+end;
+
+{ Double Ctrl: the selection if there is one, otherwise everything typed since
+  the caret last moved, otherwise the word at the caret. }
+procedure TKbdHookManager.HandleDoubleCtrl;
+var
+  Item: TInputWorkItem;
+  Profile: TApplicationProfile;
+  Line, Converted, ProcessName: string;
+  NeverSwitch: TNeverSwitchCallback;
+  PreferSwitch: TPreferSwitchCallback;
+  I: Integer;
+  HasLetter: Boolean;
+begin
+  if not AppSettings.DoubleCtrlEnabled or not CurrentApplicationEnabled then
+    Exit;
+  FillChar(Item, SizeOf(Item), 0);
+  Item.TargetWindow := GetForegroundWindow;
+  Profile := CurrentProfile;
+  Item.PlaySwitchSound := Profile.SoundOnSwitch;
+  Item.LearningProcess := LearningProcessName;
+  HasLetter := False;
+  for I := 1 to Length(FLineText) do
+    if FLineText[I].IsLetter then
+    begin
+      HasLetter := True;
+      Break;
+    end;
+  if IsSelectionStillArmed and FInputBuffer.IsEmpty then
+  begin
+    Item.Kind := iwReplaceSelection;
+  end
+  else if HasLetter then
+  begin
+    ProcessName := LearningProcessName;
+    NeverSwitch :=
+      function(const AWord: string): Boolean
+      begin
+        Result := AppSettings.IsNeverSwitchWord(AWord, ProcessName);
+      end;
+    PreferSwitch :=
+      function(const AWord: string): Boolean
+      begin
+        Result := AppSettings.IsPreferSwitchWord(AWord, ProcessName);
+      end;
+    Line := FLineText;
+    Converted := ConvertManualSelection(Line, Profile.HeuristicMode,
+      NeverSwitch, PreferSwitch);
+    if Converted = Line then
+    begin
+      ShowCaretNote('Нечего конвертировать');
+      Exit;
+    end;
+    Item.Kind := iwReplaceBeforeCaret;
+    Item.OldWordLength := CaretStepCount(Line);
+    Item.ExpectedText := Line;
+    Item.NewText := Converted;
+    Item.SwitchLayoutAfter := True;
+    FLineText := Converted;
+  end
+  else
+  begin
+    Item.Kind := iwReplaceSelection;
+    Item.FromCaret := True;
+  end;
+  FInputBuffer.Clear;
+  ClearLastConversion;
+  FSelectionArmed := False;
+  FSelectionArmedTick := 0;
+  EnqueueWork(Item);
+end;
+
 procedure TKbdHookManager.HandlePrintableKey(VKCode: DWORD; ALang: TLangKind);
 var
   Shifted: Boolean;
@@ -1347,6 +1830,8 @@ begin
   Profile := CurrentProfile;
   if (ALang = lkRU) and Profile.SoundOnRussianInput then
     PlayKeyClickRU;
+  if FInputBuffer.IsEmpty then
+    ClearCaseFix;
   if FInputBuffer.IsEmpty and (FLastConvertedText <> '') then
     NoteConversionKept;
   Shifted := ((GetKeyState(VK_SHIFT) and $8000) <> 0) xor
@@ -1354,12 +1839,16 @@ begin
   FAwaitQuestionSpace := False;
   Ch := MapVirtualKeyToChar(VKCode, Shifted, ALang);
   if Ch <> #0 then
+  begin
     FInputBuffer.AddChar(Ch, ALang);
+    LineAppend(Ch);
+  end;
   FBackspaceRun := 0;
 end;
 
 procedure TKbdHookManager.HandleExplicitUndo;
 begin
+  RejectCaseFix;
   RevertPhraseToTypedLayout;
   RememberConversionLesson(laRejectStrong);
   ResetContext;
@@ -1403,6 +1892,7 @@ begin
   end;
   if AInput.VirtualKey in [VK_SPACE, VK_RETURN, VK_TAB] then
   begin
+    NoteLineDelimiter(AInput.VirtualKey, #0);
     FInputBuffer.Clear;
     FBackspaceRun := 0;
     Exit;
@@ -1418,15 +1908,21 @@ begin
       ((GetKeyState(VK_CAPITAL) and 1) <> 0);
     if KeyedWordSeparator(AInput.VirtualKey, Shifted, CurrentLang) <> #0 then
     begin
+      LineAppend(KeyedWordSeparator(AInput.VirtualKey, Shifted, CurrentLang));
       FInputBuffer.Clear;
       FBackspaceRun := 0;
       Exit;
     end;
+    if FInputBuffer.IsEmpty then
+      ClearCaseFix;
     if FInputBuffer.IsEmpty and (FLastConvertedText <> '') then
       NoteConversionKept;
     Ch := MapVirtualKeyToChar(AInput.VirtualKey, Shifted, CurrentLang);
     if Ch <> #0 then
+    begin
       FInputBuffer.AddChar(Ch, CurrentLang);
+      LineAppend(Ch);
+    end;
     FBackspaceRun := 0;
   end;
 end;
@@ -1508,18 +2004,31 @@ begin
   if IsFocusedPasswordField then
   begin
     ResetContext;
+    NoteIgnoredKey(Kbd^.vkCode, IsKeyDown, IsKeyUp, 'Поле пароля');
     Exit;
   end;
 
   if Kbd^.vkCode in [VK_MENU, VK_LMENU, VK_RMENU] then
     Exit;
 
+  if Kbd^.vkCode in [VK_CONTROL, VK_LCONTROL, VK_RCONTROL] then
+    TrackCtrlTap(IsKeyDown, IsKeyUp)
+  else if IsKeyDown then
+  begin
+    // Any other key between the two taps spoils the gesture.
+    FCtrlClean := False;
+    FCtrlTapTick := 0;
+  end;
+
   if Kbd^.vkCode = VK_LSHIFT then
   begin
     if CurrentApplicationEnabled then
       HandleLeftShiftEvent(IsKeyDown, IsKeyUp)
     else
+    begin
       IgnoreLeftShiftWhileDisabled(IsKeyDown, IsKeyUp);
+      NoteIgnoredKey(Kbd^.vkCode, IsKeyDown, IsKeyUp, IgnoredReason);
+    end;
     Exit;
   end;
 
@@ -1543,6 +2052,7 @@ begin
   if not CurrentApplicationEnabled then
   begin
     ResetContext;
+    NoteIgnoredKey(Kbd^.vkCode, IsKeyDown, IsKeyUp, IgnoredReason);
     Exit;
   end;
   if (Kbd^.vkCode = Ord('Z')) and

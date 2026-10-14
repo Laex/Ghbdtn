@@ -19,7 +19,8 @@ type
     deTrayUpdateFailed,
     deSingleInstanceFailed,
     deHeuristicDecision,
-    deHookFailure
+    deHookFailure,
+    deStaleWorkDropped
   );
 
 procedure ConfigureDiagnostics(const AFilePath: string;
@@ -82,6 +83,7 @@ begin
     deSingleInstanceFailed: Result := 'single_instance_failed';
     deHeuristicDecision: Result := 'heuristic_decision';
     deHookFailure: Result := 'hook_failure';
+    deStaleWorkDropped: Result := 'stale_work_dropped';
   else
     Result := 'unknown';
   end;
