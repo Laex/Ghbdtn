@@ -68,6 +68,9 @@ modules/
 .*
 !.gitignore
 !.gitattributes
+!/.github/
+/.github/*
+!/.github/workflows/
 
 # IDE / OS junk
 Thumbs.db

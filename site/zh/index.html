@@ -1,0 +1,115 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Ghbdtn – Windows 键盘布局自动纠正工具</title>
+<meta name="description" content="Ghbdtn 会纠正在错误键盘布局下输入的单词：ghbdtn 变成 привет，руддщ 变成 hello。后台运行，无需联网，开源。">
+<link rel="icon" href="../images/icon.ico">
+<link rel="stylesheet" href="../style.css">
+<link rel="alternate" hreflang="en" href="../en/">
+<link rel="alternate" hreflang="ru" href="../ru/">
+<link rel="alternate" hreflang="de" href="../de/">
+<link rel="alternate" hreflang="zh" href="./">
+<meta property="og:title" content="Ghbdtn – Windows 键盘布局自动纠正工具">
+<meta property="og:description" content="Windows 上的 RU/EN 键盘布局自动纠正。开源，无需联网。">
+<meta property="og:image" content="https://laex.github.io/Ghbdtn/images/caret_hint_states.png">
+<meta property="og:type" content="website">
+</head>
+<body>
+<header class="top">
+  <div class="wrap">
+    <a class="brand" href="./"><img src="../images/icon.ico" alt="" width="28" height="28"> Ghbdtn</a>
+    <nav class="links">
+      <a href="#features">功能</a>
+      <a href="#screenshots">截图</a>
+      <a href="#start">开始使用</a>
+      <a href="#projects">其他项目</a>
+      <a href="https://github.com/Laex/Ghbdtn">GitHub</a>
+      <a href="../en/">English</a>
+      <a href="../ru/">Русский</a>
+      <a href="../de/">Deutsch</a>
+      <span class="lang">中文</span>
+    </nav>
+  </div>
+</header>
+
+<main class="wrap">
+  <div class="hero">
+    <div>
+      <h1>输错了键盘布局？Ghbdtn 自动纠正</h1>
+      <p class="lead">程序在后台运行，监视输入，并在正确的布局下重新输入单词：<code>ghbdtn</code> 变成“привет”，<code>руддщ</code> 变成“hello”。手动模式是连按两次 Left Shift。</p>
+      <div class="cta">
+        <a class="btn" href="https://github.com/Laex/Ghbdtn/releases">下载</a>
+        <a class="btn secondary" href="https://github.com/Laex/Ghbdtn">源代码</a>
+      </div>
+      <p class="fine">Windows x64 · 免费，MPL-2.0 · 无需联网</p>
+    </div>
+    <div>
+      <div class="demo" aria-hidden="true">
+        <div class="demo-field">
+          <span class="demo-text"><span class="t-a">ghbdtn</span><span class="t-b">привет</span></span>
+          <span class="demo-badge"><span class="t-a">EN</span><span class="t-b">RU</span></span>
+        </div>
+        <div class="demo-field">
+          <span class="demo-text"><span class="t-a">руддщ</span><span class="t-b">hello</span></span>
+          <span class="demo-badge"><span class="t-a">RU</span><span class="t-b">EN</span></span>
+        </div>
+      </div>
+      <p class="fine demo-cap">单词会在另一种布局下重新输入，并切换布局</p>
+    </div>
+  </div>
+
+  <section id="features">
+    <h2>功能</h2>
+    <div class="cards">
+      <div class="card"><h3>自动切换</h3><p>每个单词读两遍：按输入原样，以及按另一种布局当作文本。当另一种读法明显更合理时才切换。三种模式：谨慎、平衡、激进。</p></div>
+      <div class="card"><h3>双击 Left Shift</h3><p>重新输入当前单词，转换选中文本或光标处的单词。再按一次可恢复原文。双击 Ctrl 转换整行已输入的内容。</p></div>
+      <div class="card"><h3>不必等到词尾</h3><p>可选功能：输入几个字母后，如果开头不像本语言的任何单词，就提前切换。在词尾之前双击 Left Shift 可取消。</p></div>
+      <div class="card"><h3>从你的修正中学习</h3><p>撤销的修正会被记住，之后不再改动该单词。手动切换过的单词下次会自动切换。记录按应用分别保存。</p></div>
+      <div class="card"><h3>不乱插手</h3><p>在密码框中不做任何事。含数字的单词、地址、路径、混合字母表和缩写都不会被改动。在全屏应用和密码管理器中保持静默。</p></div>
+      <div class="card"><h3>按应用设置规则</h3><p>带通配符的排除列表，每个应用单独的设置，托盘菜单中可快速暂停，包括 30 分钟或 1 小时。</p></div>
+      <div class="card"><h3>光标处提示</h3><p>布局变化时，光标附近会出现 RU 或 EN 小标签。决定不明显时，标签会说明原因：学习、词典或“不改动”。</p></div>
+      <div class="card"><h3>大小写与 Caps Lock</h3><p>“ТОлько”变成“Только”，“пРИВЕТ”变成“Привет”，并关闭 Caps Lock。双击 Right Shift 切换选中文本的大小写，托盘菜单提供转写功能。</p></div>
+      <div class="card"><h3>结合上下文</h3><p>待修正单词前的短虚词会一起转换：<code>D yfxfkt</code> 变成“В начале”。只修正单词中错误的部分。</p></div>
+      <div class="card"><h3>无需联网</h3><p>输入的内容不会发送到任何地方，程序自己也不会联网。设置保存在 <code>Ghbdtn.exe</code> 旁边的 <code>config.json</code> 中。</p></div>
+    </div>
+  </section>
+
+  <section id="screenshots">
+    <h2>截图</h2>
+    <div class="gallery">
+      <figure><a class="shot light" href="../images/settings.png"><img loading="lazy" src="../images/settings.png" alt="设置窗口"></a><figcaption>设置窗口：基本、手势、声音与提示</figcaption></figure>
+      <figure><a class="shot light" href="../images/caret_hint_states.png"><img loading="lazy" src="../images/caret_hint_states.png" alt="光标处提示"></a><figcaption>浅色和深色主题下的光标处提示</figcaption></figure>
+      <figure><a class="shot light" href="../images/caret_hint_notes.png"><img loading="lazy" src="../images/caret_hint_notes.png" alt="提示中的原因"></a><figcaption>提示会显示决定的原因</figcaption></figure>
+      <figure><a class="shot light" href="../images/tray_icons.png"><img loading="lazy" src="../images/tray_icons.png" alt="托盘图标"></a><figcaption>托盘图标显示当前布局</figcaption></figure>
+    </div>
+  </section>
+
+  <section id="start">
+    <h2>开始使用</h2>
+    <ol class="steps">
+      <li><strong>下载：</strong>从 <a href="https://github.com/Laex/Ghbdtn/releases">Releases</a> 页面获取压缩包，并用 <code>.sha256</code> 文件校验。</li>
+      <li><strong>解压：</strong>解压到任意文件夹并运行 <code>Ghbdtn.exe</code>。通知区域会出现一个图标，显示当前布局。</li>
+      <li><strong>开始输入：</strong>布局不对？连按两次 Left Shift。设置、开机自启和按应用规则都在图标菜单中。</li>
+    </ol>
+    <p class="note">和所有布局切换工具一样，本程序会安装全局键盘和鼠标钩子，杀毒软件可能会询问。源代码是公开的，可以自行检查并构建：<a href="https://github.com/Laex/Ghbdtn#сборка-и-тесты">构建说明</a>（俄文）。</p>
+  </section>
+
+  <section id="projects">
+    <h2>其他项目</h2>
+    <div class="cards">
+      <a class="card" href="https://laex.github.io/MTN2/zh/"><h3>MTN2</h3><p>带内置终端、查看器、编辑器和插件的双面板文件管理器。支持 Windows 和 Linux。</p></a>
+    </div>
+  </section>
+</main>
+
+<footer>
+  <div class="wrap">
+    <a href="https://github.com/Laex/Ghbdtn/blob/main/CHANGELOG.md">更新日志</a>
+    <a href="https://github.com/Laex/Ghbdtn">源代码</a>
+    <a href="https://github.com/Laex/Ghbdtn/blob/main/LICENSE">许可证 MPL-2.0</a>
+  </div>
+</footer>
+</body>
+</html>

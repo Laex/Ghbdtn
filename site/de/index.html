@@ -1,0 +1,115 @@
+<!doctype html>
+<html lang="de">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Ghbdtn – automatische Korrektur der Tastaturbelegung für Windows</title>
+<meta name="description" content="Ghbdtn korrigiert Wörter, die in der falschen Tastaturbelegung getippt wurden: ghbdtn wird zu привет, руддщ zu hello. Läuft im Hintergrund, offline, Open Source.">
+<link rel="icon" href="../images/icon.ico">
+<link rel="stylesheet" href="../style.css">
+<link rel="alternate" hreflang="en" href="../en/">
+<link rel="alternate" hreflang="ru" href="../ru/">
+<link rel="alternate" hreflang="de" href="./">
+<link rel="alternate" hreflang="zh" href="../zh/">
+<meta property="og:title" content="Ghbdtn – automatische Korrektur der Tastaturbelegung für Windows">
+<meta property="og:description" content="Automatische RU/EN-Layout-Korrektur für Windows. Open Source, offline.">
+<meta property="og:image" content="https://laex.github.io/Ghbdtn/images/caret_hint_states.png">
+<meta property="og:type" content="website">
+</head>
+<body>
+<header class="top">
+  <div class="wrap">
+    <a class="brand" href="./"><img src="../images/icon.ico" alt="" width="28" height="28"> Ghbdtn</a>
+    <nav class="links">
+      <a href="#features">Funktionen</a>
+      <a href="#screenshots">Screenshots</a>
+      <a href="#start">Erste Schritte</a>
+      <a href="#projects">Weitere Projekte</a>
+      <a href="https://github.com/Laex/Ghbdtn">GitHub</a>
+      <a href="../en/">English</a>
+      <a href="../ru/">Русский</a>
+      <span class="lang">Deutsch</span>
+      <a href="../zh/">中文</a>
+    </nav>
+  </div>
+</header>
+
+<main class="wrap">
+  <div class="hero">
+    <div>
+      <h1>In der falschen Belegung getippt? Ghbdtn korrigiert es</h1>
+      <p class="lead">Das Programm läuft im Hintergrund, beobachtet die Eingabe und tippt das Wort in der richtigen Belegung neu: <code>ghbdtn</code> wird zu „привет“, <code>руддщ</code> zu „hello“. Der manuelle Modus ist ein doppeltes Drücken von Left Shift.</p>
+      <div class="cta">
+        <a class="btn" href="https://github.com/Laex/Ghbdtn/releases">Herunterladen</a>
+        <a class="btn secondary" href="https://github.com/Laex/Ghbdtn">Quellcode</a>
+      </div>
+      <p class="fine">Windows x64 · Kostenlos, MPL-2.0 · Funktioniert offline</p>
+    </div>
+    <div>
+      <div class="demo" aria-hidden="true">
+        <div class="demo-field">
+          <span class="demo-text"><span class="t-a">ghbdtn</span><span class="t-b">привет</span></span>
+          <span class="demo-badge"><span class="t-a">EN</span><span class="t-b">RU</span></span>
+        </div>
+        <div class="demo-field">
+          <span class="demo-text"><span class="t-a">руддщ</span><span class="t-b">hello</span></span>
+          <span class="demo-badge"><span class="t-a">RU</span><span class="t-b">EN</span></span>
+        </div>
+      </div>
+      <p class="fine demo-cap">Das Wort wird in der anderen Belegung neu getippt und die Belegung umgeschaltet</p>
+    </div>
+  </div>
+
+  <section id="features">
+    <h2>Funktionen</h2>
+    <div class="cards">
+      <div class="card"><h3>Automatisches Umschalten</h3><p>Jedes Wort wird zweimal gelesen: wie getippt und als Text der anderen Belegung. Umgeschaltet wird, wenn die andere Lesart deutlich plausibler ist. Drei Modi: vorsichtig, ausgewogen, aggressiv.</p></div>
+      <div class="card"><h3>Doppeltes Left Shift</h3><p>Tippt das Wort neu, wandelt die Auswahl oder das Wort am Cursor um. Erneutes Drücken stellt den vorherigen Text wieder her. Doppeltes Ctrl wandelt die ganze getippte Zeile um.</p></div>
+      <div class="card"><h3>Ohne auf das Wortende zu warten</h3><p>Optional wird ein Wort schon nach wenigen Buchstaben umgeschaltet, wenn der Anfang zu keinem Wort der eigenen Sprache passt. Doppeltes Left Shift vor dem Wortende bricht ab.</p></div>
+      <div class="card"><h3>Lernt aus Ihren Korrekturen</h3><p>Eine rückgängig gemachte Korrektur wird gemerkt, das Wort bleibt künftig unberührt. Ein von Hand umgeschaltetes Wort wird beim nächsten Mal automatisch umgeschaltet. Die Einträge gelten pro Anwendung.</p></div>
+      <div class="card"><h3>Hält sich zurück</h3><p>In Passwortfeldern tut das Programm nichts. Wörter mit Ziffern, Adressen, Pfade, gemischte Alphabete und Abkürzungen bleiben unberührt. In Vollbildanwendungen und Passwortmanagern ist es still.</p></div>
+      <div class="card"><h3>Regeln pro Anwendung</h3><p>Eine Ausschlussliste mit Platzhaltern, eigene Einstellungen pro Anwendung, schnelle Pause im Tray-Menü, auch für 30 Minuten oder eine Stunde.</p></div>
+      <div class="card"><h3>Hinweis am Cursor</h3><p>Beim Wechsel der Belegung erscheint neben dem Cursor eine Marke RU oder EN. Ist die Entscheidung nicht offensichtlich, nennt die Marke den Grund: Lernen, Wörterbuch oder „nicht anfassen“.</p></div>
+      <div class="card"><h3>Groß-/Kleinschreibung und Caps Lock</h3><p>„ТОлько“ wird zu „Только“, „пРИВЕТ“ zu „Привет“, und Caps Lock wird ausgeschaltet. Doppeltes Right Shift ändert die Schreibung der Auswahl, das Tray-Menü bietet Transliteration.</p></div>
+      <div class="card"><h3>Kontextbewusst</h3><p>Ein kurzes Funktionswort vor dem zu korrigierenden Wort wird mit umgewandelt: <code>D yfxfkt</code> wird zu „В начале“. Korrigiert wird nur der falsche Teil eines Wortes.</p></div>
+      <div class="card"><h3>Offline</h3><p>Das Getippte wird nirgendwohin gesendet, das Programm geht von selbst nicht online. Die Einstellungen liegen in <code>config.json</code> neben <code>Ghbdtn.exe</code>.</p></div>
+    </div>
+  </section>
+
+  <section id="screenshots">
+    <h2>Screenshots</h2>
+    <div class="gallery">
+      <figure><a class="shot light" href="../images/settings.png"><img loading="lazy" src="../images/settings.png" alt="Einstellungsfenster"></a><figcaption>Das Einstellungsfenster: Grundlagen, Gesten, Ton und Hinweise</figcaption></figure>
+      <figure><a class="shot light" href="../images/caret_hint_states.png"><img loading="lazy" src="../images/caret_hint_states.png" alt="Hinweis am Cursor"></a><figcaption>Der Hinweis am Cursor im hellen und dunklen Thema</figcaption></figure>
+      <figure><a class="shot light" href="../images/caret_hint_notes.png"><img loading="lazy" src="../images/caret_hint_notes.png" alt="Grund im Hinweis"></a><figcaption>Der Hinweis zeigt den Grund der Entscheidung</figcaption></figure>
+      <figure><a class="shot light" href="../images/tray_icons.png"><img loading="lazy" src="../images/tray_icons.png" alt="Tray-Symbole"></a><figcaption>Das Tray-Symbol zeigt die aktuelle Belegung</figcaption></figure>
+    </div>
+  </section>
+
+  <section id="start">
+    <h2>Erste Schritte</h2>
+    <ol class="steps">
+      <li><strong>Laden Sie</strong> das Archiv von der Seite <a href="https://github.com/Laex/Ghbdtn/releases">Releases</a> herunter und prüfen Sie es mit der Datei <code>.sha256</code>.</li>
+      <li><strong>Entpacken Sie</strong> es in einen beliebigen Ordner und starten Sie <code>Ghbdtn.exe</code>. Im Infobereich erscheint ein Symbol, das die aktuelle Belegung zeigt.</li>
+      <li><strong>Tippen Sie.</strong> Falsche Belegung? Zweimal Left Shift drücken. Einstellungen, Autostart und Regeln pro Anwendung stehen im Symbolmenü.</li>
+    </ol>
+    <p class="note">Wie jeder Layout-Umschalter installiert das Programm globale Tastatur- und Maus-Hooks, daher kann Ihr Virenscanner nachfragen. Der Quellcode ist offen, Sie können ihn prüfen und selbst bauen: <a href="https://github.com/Laex/Ghbdtn#сборка-и-тесты">Bauanleitung</a> (auf Russisch).</p>
+  </section>
+
+  <section id="projects">
+    <h2>Weitere Projekte</h2>
+    <div class="cards">
+      <a class="card" href="https://laex.github.io/MTN2/de/"><h3>MTN2</h3><p>Ein Zwei-Fenster-Dateimanager mit integriertem Terminal, Viewer, Editor und Plugins. Windows und Linux.</p></a>
+    </div>
+  </section>
+</main>
+
+<footer>
+  <div class="wrap">
+    <a href="https://github.com/Laex/Ghbdtn/blob/main/CHANGELOG.md">Neuigkeiten</a>
+    <a href="https://github.com/Laex/Ghbdtn">Quellcode</a>
+    <a href="https://github.com/Laex/Ghbdtn/blob/main/LICENSE">Lizenz MPL-2.0</a>
+  </div>
+</footer>
+</body>
+</html>

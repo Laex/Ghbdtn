@@ -1,0 +1,115 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Ghbdtn – automatic keyboard layout correction for Windows</title>
+<meta name="description" content="Ghbdtn fixes words typed in the wrong keyboard layout: ghbdtn becomes привет, руддщ becomes hello. Runs in the background, offline, open source.">
+<link rel="icon" href="../images/icon.ico">
+<link rel="stylesheet" href="../style.css">
+<link rel="alternate" hreflang="en" href="./">
+<link rel="alternate" hreflang="ru" href="../ru/">
+<link rel="alternate" hreflang="de" href="../de/">
+<link rel="alternate" hreflang="zh" href="../zh/">
+<meta property="og:title" content="Ghbdtn – automatic keyboard layout correction for Windows">
+<meta property="og:description" content="Automatic RU/EN keyboard layout correction for Windows. Open source, offline.">
+<meta property="og:image" content="https://laex.github.io/Ghbdtn/images/caret_hint_states.png">
+<meta property="og:type" content="website">
+</head>
+<body>
+<header class="top">
+  <div class="wrap">
+    <a class="brand" href="./"><img src="../images/icon.ico" alt="" width="28" height="28"> Ghbdtn</a>
+    <nav class="links">
+      <a href="#features">Features</a>
+      <a href="#screenshots">Screenshots</a>
+      <a href="#start">Getting started</a>
+      <a href="#projects">Other projects</a>
+      <a href="https://github.com/Laex/Ghbdtn">GitHub</a>
+      <span class="lang">English</span>
+      <a href="../ru/">Русский</a>
+      <a href="../de/">Deutsch</a>
+      <a href="../zh/">中文</a>
+    </nav>
+  </div>
+</header>
+
+<main class="wrap">
+  <div class="hero">
+    <div>
+      <h1>Typed in the wrong layout? Ghbdtn fixes it for you</h1>
+      <p class="lead">It runs in the background, watches what you type and retypes the word in the right layout: <code>ghbdtn</code> becomes "привет", and <code>руддщ</code> becomes "hello". Manual mode is a double press of Left Shift.</p>
+      <div class="cta">
+        <a class="btn" href="https://github.com/Laex/Ghbdtn/releases">Download</a>
+        <a class="btn secondary" href="https://github.com/Laex/Ghbdtn">Source code</a>
+      </div>
+      <p class="fine">Windows x64 · Free, MPL-2.0 · Works offline</p>
+    </div>
+    <div>
+      <div class="demo" aria-hidden="true">
+        <div class="demo-field">
+          <span class="demo-text"><span class="t-a">ghbdtn</span><span class="t-b">привет</span></span>
+          <span class="demo-badge"><span class="t-a">EN</span><span class="t-b">RU</span></span>
+        </div>
+        <div class="demo-field">
+          <span class="demo-text"><span class="t-a">руддщ</span><span class="t-b">hello</span></span>
+          <span class="demo-badge"><span class="t-a">RU</span><span class="t-b">EN</span></span>
+        </div>
+      </div>
+      <p class="fine demo-cap">The word is retyped in the other layout and the layout is switched</p>
+    </div>
+  </div>
+
+  <section id="features">
+    <h2>Features</h2>
+    <div class="cards">
+      <div class="card"><h3>Automatic switching</h3><p>Each word is read twice: as typed and as text in the other layout. It is switched when the other reading is clearly more plausible. Three modes: cautious, balanced, aggressive.</p></div>
+      <div class="card"><h3>Double Left Shift</h3><p>Retypes the word, converts the selection or the word at the caret. Pressing it again restores the previous text. Double Ctrl converts the whole typed line.</p></div>
+      <div class="card"><h3>No waiting for the word end</h3><p>Optionally, a word is switched after a few letters if its beginning looks like no word of its own language. Double Left Shift before the word ends cancels it.</p></div>
+      <div class="card"><h3>Learns from your corrections</h3><p>An undone correction is remembered and the word is left alone. A word you switched by hand is switched automatically next time. Records are kept per application.</p></div>
+      <div class="card"><h3>Stays out of the way</h3><p>In password fields it does nothing. Words with digits, addresses, paths, mixed alphabets and abbreviations are left alone. It stays quiet in full-screen apps and password managers.</p></div>
+      <div class="card"><h3>Per-application rules</h3><p>An exclusion list with wildcards, separate settings per application, a quick pause from the tray menu, including 30 minutes or an hour.</p></div>
+      <div class="card"><h3>Hint at the caret</h3><p>When the layout changes, a small RU or EN tag appears near the caret. If the decision is not obvious, the tag names the reason: learning, dictionary or "leave alone".</p></div>
+      <div class="card"><h3>Case and Caps Lock</h3><p>"ТОлько" becomes "Только", "пРИВЕТ" becomes "Привет" and Caps Lock is turned off. Double Right Shift changes the case of the selection, and the tray menu offers transliteration.</p></div>
+      <div class="card"><h3>Context aware</h3><p>A short function word before the word being fixed is converted with it: <code>D yfxfkt</code> becomes "В начале". Only the wrong part of a word is fixed.</p></div>
+      <div class="card"><h3>Offline</h3><p>Nothing you type is sent anywhere, and the program does not go online on its own. Settings live in <code>config.json</code> next to <code>Ghbdtn.exe</code>.</p></div>
+    </div>
+  </section>
+
+  <section id="screenshots">
+    <h2>Screenshots</h2>
+    <div class="gallery">
+      <figure><a class="shot light" href="../images/settings.png"><img loading="lazy" src="../images/settings.png" alt="Settings window"></a><figcaption>The settings window: basics, gestures, sound and hints</figcaption></figure>
+      <figure><a class="shot light" href="../images/caret_hint_states.png"><img loading="lazy" src="../images/caret_hint_states.png" alt="Hint at the caret"></a><figcaption>The hint at the caret in light and dark themes</figcaption></figure>
+      <figure><a class="shot light" href="../images/caret_hint_notes.png"><img loading="lazy" src="../images/caret_hint_notes.png" alt="Reason shown in the hint"></a><figcaption>The hint shows the reason for the decision</figcaption></figure>
+      <figure><a class="shot light" href="../images/tray_icons.png"><img loading="lazy" src="../images/tray_icons.png" alt="Tray icons"></a><figcaption>The tray icon shows the current layout</figcaption></figure>
+    </div>
+  </section>
+
+  <section id="start">
+    <h2>Getting started</h2>
+    <ol class="steps">
+      <li><strong>Download</strong> the archive from the <a href="https://github.com/Laex/Ghbdtn/releases">Releases</a> page and verify it against the <code>.sha256</code> file.</li>
+      <li><strong>Extract</strong> it to any folder and run <code>Ghbdtn.exe</code>. An icon appears in the notification area and shows the current layout.</li>
+      <li><strong>Type.</strong> Wrong layout? Press Left Shift twice. Settings, autostart and per-application rules are in the icon menu.</li>
+    </ol>
+    <p class="note">Like every layout switcher, the program installs global keyboard and mouse hooks, so your antivirus may ask about it. The source code is open, so you can inspect it and build it yourself: <a href="https://github.com/Laex/Ghbdtn#сборка-и-тесты">build instructions</a> (in Russian).</p>
+  </section>
+
+  <section id="projects">
+    <h2>Other projects</h2>
+    <div class="cards">
+      <a class="card" href="https://laex.github.io/MTN2/en/"><h3>MTN2</h3><p>A dual-panel file manager with a built-in terminal, viewer, editor and plugins. Windows and Linux.</p></a>
+    </div>
+  </section>
+</main>
+
+<footer>
+  <div class="wrap">
+    <a href="https://github.com/Laex/Ghbdtn/blob/main/CHANGELOG.md">What's new</a>
+    <a href="https://github.com/Laex/Ghbdtn">Source code</a>
+    <a href="https://github.com/Laex/Ghbdtn/blob/main/LICENSE">License MPL-2.0</a>
+  </div>
+</footer>
+</body>
+</html>

@@ -1,0 +1,115 @@
+<!doctype html>
+<html lang="ru">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Ghbdtn – автоматическое исправление раскладки клавиатуры для Windows</title>
+<meta name="description" content="Ghbdtn исправляет слова, набранные в неверной раскладке: ghbdtn становится привет, руддщ становится hello. Работает в фоне, без сети, открытый код.">
+<link rel="icon" href="../images/icon.ico">
+<link rel="stylesheet" href="../style.css">
+<link rel="alternate" hreflang="en" href="../en/">
+<link rel="alternate" hreflang="ru" href="./">
+<link rel="alternate" hreflang="de" href="../de/">
+<link rel="alternate" hreflang="zh" href="../zh/">
+<meta property="og:title" content="Ghbdtn – автоматическое исправление раскладки клавиатуры для Windows">
+<meta property="og:description" content="Автоматическое исправление раскладки RU/EN для Windows. Открытый код, без сети.">
+<meta property="og:image" content="https://laex.github.io/Ghbdtn/images/caret_hint_states.png">
+<meta property="og:type" content="website">
+</head>
+<body>
+<header class="top">
+  <div class="wrap">
+    <a class="brand" href="./"><img src="../images/icon.ico" alt="" width="28" height="28"> Ghbdtn</a>
+    <nav class="links">
+      <a href="#features">Возможности</a>
+      <a href="#screenshots">Скриншоты</a>
+      <a href="#start">Как начать</a>
+      <a href="#projects">Другие проекты</a>
+      <a href="https://github.com/Laex/Ghbdtn">GitHub</a>
+      <a href="../en/">English</a>
+      <span class="lang">Русский</span>
+      <a href="../de/">Deutsch</a>
+      <a href="../zh/">中文</a>
+    </nav>
+  </div>
+</header>
+
+<main class="wrap">
+  <div class="hero">
+    <div>
+      <h1>Набрали не в той раскладке? Ghbdtn исправит сама</h1>
+      <p class="lead">Программа работает в фоне, следит за набором и перенабирает слово в нужной раскладке: <code>ghbdtn</code> становится «привет», а <code>руддщ</code> – «hello». Ручной режим включается двойным Left Shift.</p>
+      <div class="cta">
+        <a class="btn" href="https://github.com/Laex/Ghbdtn/releases">Скачать</a>
+        <a class="btn secondary" href="https://github.com/Laex/Ghbdtn">Исходный код</a>
+      </div>
+      <p class="fine">Windows x64 · Бесплатно, MPL-2.0 · Работает без сети</p>
+    </div>
+    <div>
+      <div class="demo" aria-hidden="true">
+        <div class="demo-field">
+          <span class="demo-text"><span class="t-a">ghbdtn</span><span class="t-b">привет</span></span>
+          <span class="demo-badge"><span class="t-a">EN</span><span class="t-b">RU</span></span>
+        </div>
+        <div class="demo-field">
+          <span class="demo-text"><span class="t-a">руддщ</span><span class="t-b">hello</span></span>
+          <span class="demo-badge"><span class="t-a">RU</span><span class="t-b">EN</span></span>
+        </div>
+      </div>
+      <p class="fine demo-cap">Слово перенабирается в другой раскладке, а раскладка переключается</p>
+    </div>
+  </div>
+
+  <section id="features">
+    <h2>Что умеет</h2>
+    <div class="cards">
+      <div class="card"><h3>Автопереключение</h3><p>Слово читается дважды: как набрано и как текст другой раскладки. Переключается, когда другое чтение заметно правдоподобнее. Три режима: осторожный, сбалансированный, агрессивный.</p></div>
+      <div class="card"><h3>Двойной Left Shift</h3><p>Перенабирает слово, переводит выделение или слово у каретки. Повторный жест возвращает прежний текст. Двойной Ctrl конвертирует всю набранную строку.</p></div>
+      <div class="card"><h3>Не ждёт конца слова</h3><p>По желанию программа переключает слово уже после нескольких букв, если начало не похоже ни на одно слово своего языка. Двойной Left Shift до конца слова отменяет.</p></div>
+      <div class="card"><h3>Учится на ваших правках</h3><p>Отмена исправления запоминается: слово больше не трогается. Слово, переключённое вручную, в следующий раз переключается само. Записи ведутся отдельно для каждого приложения.</p></div>
+      <div class="card"><h3>Не лезет куда не надо</h3><p>В полях пароля программа ничего не делает. Не трогаются слова с цифрами, адреса, пути, смешанные алфавиты и аббревиатуры. В полноэкранных приложениях и менеджерах паролей она молчит.</p></div>
+      <div class="card"><h3>Правила для приложений</h3><p>Список исключений с масками, отдельные настройки для каждого приложения, быстрая пауза из меню трея, в том числе на 30 минут или час.</p></div>
+      <div class="card"><h3>Подсказка у каретки</h3><p>При смене раскладки рядом с кареткой появляется метка RU или EN. Если решение неочевидно, метка называет причину: обучение, словарь или «не трогать».</p></div>
+      <div class="card"><h3>Регистр и Caps Lock</h3><p>«ТОлько» становится «Только», «пРИВЕТ» – «Привет», а Caps Lock выключается. Двойной Right Shift меняет регистр выделения, в меню трея есть транслит.</p></div>
+      <div class="card"><h3>Учитывает контекст</h3><p>Короткое служебное слово перед исправляемым переводится вместе с ним: <code>D yfxfkt</code> становится «В начале». Исправляется только неверная часть слова.</p></div>
+      <div class="card"><h3>Без сети</h3><p>Набранное никуда не отправляется, программа сама не обращается в интернет. Настройки лежат в <code>config.json</code> рядом с <code>Ghbdtn.exe</code>.</p></div>
+    </div>
+  </section>
+
+  <section id="screenshots">
+    <h2>Скриншоты</h2>
+    <div class="gallery">
+      <figure><a class="shot light" href="../images/settings.png"><img loading="lazy" src="../images/settings.png" alt="Окно настроек"></a><figcaption>Окно настроек: основное, жесты, звук и подсказки</figcaption></figure>
+      <figure><a class="shot light" href="../images/caret_hint_states.png"><img loading="lazy" src="../images/caret_hint_states.png" alt="Подсказка у каретки"></a><figcaption>Подсказка у каретки в светлой и тёмной темах</figcaption></figure>
+      <figure><a class="shot light" href="../images/caret_hint_notes.png"><img loading="lazy" src="../images/caret_hint_notes.png" alt="Причина решения в подсказке"></a><figcaption>В подсказке видна причина решения</figcaption></figure>
+      <figure><a class="shot light" href="../images/tray_icons.png"><img loading="lazy" src="../images/tray_icons.png" alt="Значки в трее"></a><figcaption>Значок в трее показывает текущую раскладку</figcaption></figure>
+    </div>
+  </section>
+
+  <section id="start">
+    <h2>Как начать</h2>
+    <ol class="steps">
+      <li><strong>Скачайте</strong> архив со страницы <a href="https://github.com/Laex/Ghbdtn/releases">Releases</a> и проверьте его по файлу <code>.sha256</code>.</li>
+      <li><strong>Распакуйте</strong> в любую папку и запустите <code>Ghbdtn.exe</code>. Значок появится в области уведомлений, он показывает текущую раскладку.</li>
+      <li><strong>Печатайте.</strong> Не та раскладка? Дважды нажмите Left Shift. Параметры, автозапуск и правила для приложений – в меню значка.</li>
+    </ol>
+    <p class="note">Программа ставит глобальные хуки клавиатуры и мыши, как все переключатели раскладки; антивирус может спросить о ней. Исходный код открыт, его можно проверить и собрать самому: <a href="https://github.com/Laex/Ghbdtn#сборка-и-тесты">описание сборки</a>.</p>
+  </section>
+
+  <section id="projects">
+    <h2>Другие проекты</h2>
+    <div class="cards">
+      <a class="card" href="https://laex.github.io/MTN2/ru/"><h3>MTN2</h3><p>Двухпанельный файловый менеджер со встроенным терминалом, просмотрщиком, редактором и плагинами. Windows и Linux.</p></a>
+    </div>
+  </section>
+</main>
+
+<footer>
+  <div class="wrap">
+    <a href="https://github.com/Laex/Ghbdtn/blob/main/CHANGELOG.md">Что нового</a>
+    <a href="https://github.com/Laex/Ghbdtn">Исходный код</a>
+    <a href="https://github.com/Laex/Ghbdtn/blob/main/LICENSE">Лицензия MPL-2.0</a>
+  </div>
+</footer>
+</body>
+</html>
