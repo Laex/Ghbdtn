@@ -86,6 +86,7 @@ type
     FEarlyActive: Boolean;
     FEarlyBlocked: Boolean;
     FEarlyLang: TLangKind;
+    FPendingLang: TLangKind;
     FCtrlDown: Boolean;
     FCtrlClean: Boolean;
     FCtrlDownTick: UInt64;
@@ -204,7 +205,8 @@ uses
   Ghbdtn.Fixer,
   Ghbdtn.Sound,
   Ghbdtn.Diagnostics,
-  Ghbdtn.Password;
+  Ghbdtn.Password,
+  Ghbdtn.Reading;
 
 const
   LeftShiftMinInterval = 0;
@@ -495,6 +497,7 @@ begin
   FQuestionFixPending := False;
   FAwaitQuestionSpace := False;
   FConsumedDelimiterVK := 0;
+  FPendingLang := lkUnknown;
   FPendingPhraseLang := lkUnknown;
   FPendingDoubleRightShift := False;
   FRightUsedAsModifier := False;
@@ -900,6 +903,7 @@ var
 begin
   Item := AItem;
   FEarlyLang := lkUnknown;
+  FPendingLang := lkUnknown;
   if Item.Kind in [iwReplaceWord, iwReplaceSelection, iwReplaceBeforeCaret,
     iwSwitchLayout] then
     FSuppressLayoutSoundUntil := GetTickCount64 + 500;
@@ -1606,6 +1610,7 @@ var
   ProcessName: string;
   QuestionArmed: Boolean;
   MarkerText, ShortPrefix: string;
+  TrailingMark: Char;
   ShortExtra: Integer;
 begin
   Result := False;
@@ -1632,6 +1637,30 @@ begin
     FInputBuffer.Clear;
     FBackspaceRun := 0;
     Exit;
+  end;
+
+  if FEarlyActive and (FEarlyLang = lkRU) and (APunctuation = #0) and
+     TryRussianTrailingPunctuation(FInputBuffer.BufferText, TrailingMark) then
+  begin
+    // A word switched to Russian before it ended: the key of its closing
+    // mark came out as a Russian letter.
+    MarkerText := Copy(FInputBuffer.BufferText, 1,
+      FInputBuffer.BufferLength - 1);
+    FillChar(Item, SizeOf(Item), 0);
+    Item.Kind := iwReplaceWord;
+    Item.TargetWindow := GetForegroundWindow;
+    Item.OldWordLength := 1;
+    Item.NewText := TrailingMark;
+    Item.TrailingKey := Word(VKCode);
+    Item.KeepLayout := True;
+    LineReplaceTail(1, TrailingMark);
+    SettlePendingPhrase(True);
+    RememberCommittedWord(lkRU, MarkerText);
+    ClearLastConversion;
+    FInputBuffer.Clear;
+    FBackspaceRun := 0;
+    EnqueueWork(Item);
+    Exit(True);
   end;
 
   QuestionArmed := FQuestionFixPending;
@@ -1709,6 +1738,8 @@ begin
       SettlePendingPhrase(True);
       FPendingPhraseLang := Analysis.TargetLang;
       EnqueueWork(Item);
+      // Keys typed before the correction is applied are typed on its layout.
+      FPendingLang := Analysis.TargetLang;
       Result := True;
     end
     else
@@ -1990,6 +2021,7 @@ var
 begin
   Result := False;
   ClearLastCase;
+  FPendingLang := lkUnknown;
   Profile := CurrentProfile;
   if (ALang = lkRU) and Profile.SoundOnRussianInput then
     PlayKeyClickRU;
@@ -2073,6 +2105,8 @@ begin
      (AInput.VirtualKey = VK_SUBTRACT) then
   begin
     CurrentLang := FEarlyLang;
+    if CurrentLang = lkUnknown then
+      CurrentLang := FPendingLang;
     if CurrentLang = lkUnknown then
       CurrentLang := GetForegroundLangKind;
     Shifted := ((GetAsyncKeyState(VK_SHIFT) and $8000) <> 0) xor

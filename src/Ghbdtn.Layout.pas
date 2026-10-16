@@ -21,6 +21,10 @@ function LangKindToString(ALang: TLangKind): string;
 function HKLToLangKind(AHKL: HKL): TLangKind;
 function GetHKLForLang(ALang: TLangKind): HKL;
 procedure SwitchForegroundKeyboardLayout(ATargetLang: TLangKind = lkUnknown);
+{ Waits until the foreground window reports ALang as its layout. The switch
+  request is asynchronous: a key typed before the window applies it is typed
+  on the old layout. }
+function WaitForForegroundLang(ALang: TLangKind; ATimeoutMs: Cardinal): Boolean;
 
 function ConvertCharSwap(AChar: Char): Char;
 function ConvertStringSwap(const AText: string): string;
@@ -160,6 +164,19 @@ begin
     if (FocusRoot <> 0) and (FocusRoot <> ForegroundWnd) then
       PostMessage(FocusRoot, WM_INPUTLANGCHANGEREQUEST, 0, LPARAM(TargetHKL));
   end;
+end;
+
+function WaitForForegroundLang(ALang: TLangKind; ATimeoutMs: Cardinal): Boolean;
+var
+  Deadline: UInt64;
+begin
+  Deadline := GetTickCount64 + ATimeoutMs;
+  repeat
+    if GetForegroundLangKind = ALang then
+      Exit(True);
+    Sleep(4);
+  until GetTickCount64 >= Deadline;
+  Result := False;
 end;
 
 function ConvertCharSwap(AChar: Char): Char;

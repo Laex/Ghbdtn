@@ -62,6 +62,11 @@ type
     FWork: TQueue<TInputWorkItem>;
     FBackground: TQueue<TInputWorkItem>;
     FReplay: TQueue<TQueuedInput>;
+    // Arrival order of the work and replay items, so a replacement waits for
+    // the keys typed before it and not for those typed after it.
+    FWorkOrder: TQueue<UInt64>;
+    FReplayOrder: TQueue<UInt64>;
+    FArrivals: UInt64;
     FReplacementPending: Boolean;
     FStopping: Boolean;
   public
@@ -100,10 +105,14 @@ begin
   FWork := TQueue<TInputWorkItem>.Create;
   FBackground := TQueue<TInputWorkItem>.Create;
   FReplay := TQueue<TQueuedInput>.Create;
+  FWorkOrder := TQueue<UInt64>.Create;
+  FReplayOrder := TQueue<UInt64>.Create;
 end;
 
 destructor TInputQueue.Destroy;
 begin
+  FReplayOrder.Free;
+  FWorkOrder.Free;
   FReplay.Free;
   FBackground.Free;
   FWork.Free;
@@ -121,6 +130,8 @@ begin
     else
     begin
       FWork.Enqueue(AItem);
+      Inc(FArrivals);
+      FWorkOrder.Enqueue(FArrivals);
       FReplacementPending := True;
     end;
   finally
@@ -147,6 +158,8 @@ begin
   FLock.Acquire;
   try
     FReplay.Enqueue(AInput);
+    Inc(FArrivals);
+    FReplayOrder.Enqueue(FArrivals);
   finally
     FLock.Release;
   end;
@@ -159,7 +172,11 @@ begin
   try
     Result := FReplacementPending and not FStopping;
     if Result then
+    begin
       FReplay.Enqueue(AInput);
+      Inc(FArrivals);
+      FReplayOrder.Enqueue(FArrivals);
+    end;
   finally
     FLock.Release;
   end;
@@ -171,9 +188,13 @@ function TInputQueue.TryDequeueWork(out AItem: TInputWorkItem): Boolean;
 begin
   FLock.Acquire;
   try
-    Result := FWork.Count > 0;
+    Result := (FWork.Count > 0) and
+      ((FReplay.Count = 0) or (FWorkOrder.Peek < FReplayOrder.Peek));
     if Result then
+    begin
       AItem := FWork.Dequeue;
+      FWorkOrder.Dequeue;
+    end;
   finally
     FLock.Release;
   end;
@@ -183,9 +204,13 @@ function TInputQueue.TryDequeueReplay(out AInput: TQueuedInput): Boolean;
 begin
   FLock.Acquire;
   try
-    Result := FReplay.Count > 0;
+    Result := (FReplay.Count > 0) and
+      ((FWork.Count = 0) or (FReplayOrder.Peek < FWorkOrder.Peek));
     if Result then
+    begin
       AInput := FReplay.Dequeue;
+      FReplayOrder.Dequeue;
+    end;
   finally
     FLock.Release;
   end;

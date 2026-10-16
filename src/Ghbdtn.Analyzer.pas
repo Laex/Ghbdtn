@@ -328,12 +328,16 @@ var
   Bias: Integer;
   Delta: Integer;
   Plausible: Integer;
+  KeptStart, KeptStop, Offset: Integer;
+  ShortWord: string;
   Head: string;
 begin
   Result.NeedsSwitch := False;
   Result.TargetLang := lkUnknown;
   Result.ConvertedText := '';
   Result.Mark := dmNone;
+  KeptStart := 1;
+  KeptStop := MaxInt;
 
   CleanW := CleanWordString(AWord);
   if CleanW = '' then
@@ -379,8 +383,13 @@ begin
   // A one- or two-letter Russian function word ("и", "не", "на") is too short
   // to score. Typed after Russian words it is taken as Russian; at the start
   // of a phrase it stays put, since "vs" or "c" is just as likely English.
-  if (Length(CleanW) <= 2) and (ACurrentLang <> lkRU) and
-     IsRussianFunctionWord(ConvertStringSwap(CleanW).ToLower) then
+  // Keys of Russian letters on the edge count as letters here: "'nj" is the
+  // three-letter "это", not the short "то" in quotes.
+  ShortWord := TrimToReading(AWord, lkEN);
+  if ShortWord = '' then
+    ShortWord := CleanW;
+  if (Length(ShortWord) <= 2) and (ACurrentLang <> lkRU) and
+     IsRussianFunctionWord(ConvertStringSwap(ShortWord).ToLower) then
   begin
     if AManual or APhrase.Untracked or PhraseEndsWith(APhrase, lkRU) then
     begin
@@ -421,7 +430,7 @@ begin
   begin
     OtherLayout := lkRU;
     Typed := ReadAsEnglish(ReadText);
-    Other := ReadAsRussian(OtherText);
+    Other := ReadAsRussianKeepingEdges(ReadText, KeptStart, KeptStop);
     Inc(Other.Cost, InnerCapitalKeyCost * InnerCapitalKeyCount(ReadCased));
   end
   else
@@ -471,6 +480,20 @@ begin
     Result.NeedsSwitch := True;
     Result.TargetLang := OtherLayout;
     Result.ConvertedText := Converted;
+    if (SourceLayout = lkEN) and
+       ((KeptStart > 1) or (KeptStop < Length(ReadText))) then
+    begin
+      // The edge keys read as punctuation stay as typed.
+      Offset := Pos(ReadCased, AWord) - 1;
+      Result.ConvertedText :=
+        ConvertStringSwap(Copy(AWord, 1, Offset)) +
+        Copy(AWord, Offset + 1, KeptStart - 1) +
+        ConvertStringSwap(Copy(AWord, Offset + KeptStart,
+          KeptStop - KeptStart + 1)) +
+        Copy(AWord, Offset + KeptStop + 1, Length(ReadText) - KeptStop) +
+        ConvertStringSwap(Copy(AWord, Offset + Length(ReadText) + 1,
+          MaxInt));
+    end;
     if Other.Listed then
       Result.Mark := dmDictionary;
   end;

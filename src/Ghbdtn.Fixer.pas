@@ -42,6 +42,9 @@ implementation
 const
   SendRetryCount = 3;
   SendRetryDelayMs = 5;
+  UnicodeCharGapMs = 3;
+  BackspaceSettleMs = 15;
+  PauseHookForReplacement = False;
   ModifierReleaseAttempts = 10;
   ModifierReleaseDelayMs = 10;
 
@@ -296,7 +299,8 @@ function SendMarkedWordReplacement(ABackspaces: Integer; const AText: string;
   ATrailingKey: Word): Boolean;
 var
   Inputs: TArray<TInput>;
-  Count, Index, I, Attempt: Integer;
+  Count, Index, I, Attempt, Slice: Integer;
+  Sent: Boolean;
 begin
   if ABackspaces < 0 then
     ABackspaces := 0;
@@ -336,24 +340,54 @@ begin
     Inputs[Index + 1].ki.dwFlags := KEYEVENTF_KEYUP;
   end;
 
-  // Backspaces and the replacement are one packet, so the editor cannot
-  // insert the new text before the old letters are gone.
-  if Assigned(PauseKeyboardHook) then
-    PauseKeyboardHook;
-  AtomicIncrement(InjectingInput);
+  // With PauseHookForReplacement the hook is removed for the whole sequence;
+  // otherwise a key typed meanwhile is queued by the hook behind the
+  // replacement. Each Unicode character is sent on its own: a target that has
+  // not yet read the earlier characters of one large batch turns all of them
+  // into the last one.
+  if PauseHookForReplacement then
+  begin
+    if Assigned(PauseKeyboardHook) then
+      PauseKeyboardHook;
+    AtomicIncrement(InjectingInput);
+  end;
   try
-    Result := False;
-    for Attempt := 1 to SendRetryCount do
+    Result := True;
+    Index := 0;
+    while Result and (Index < Count) do
     begin
-      if SendInput(Count, Inputs[0], SizeOf(TInput)) = UINT(Count) then
-        Exit(True);
-      if Attempt < SendRetryCount then
-        Sleep(SendRetryDelayMs);
+      if Index < ABackspaces * 2 then
+        Slice := ABackspaces * 2
+      else
+        Slice := 2;
+      if Index + Slice > Count then
+        Slice := Count - Index;
+      Sent := False;
+      for Attempt := 1 to SendRetryCount do
+      begin
+        if SendInput(Slice, Inputs[Index], SizeOf(TInput)) = UINT(Slice) then
+        begin
+          Sent := True;
+          Break;
+        end;
+        if Attempt < SendRetryCount then
+          Sleep(SendRetryDelayMs);
+      end;
+      Result := Sent;
+      Inc(Index, Slice);
+      if Result and (Index < Count) then
+        if Index <= ABackspaces * 2 then
+          Sleep(BackspaceSettleMs)
+        else
+          Sleep(UnicodeCharGapMs);
     end;
   finally
-    AtomicDecrement(InjectingInput);
-    if Assigned(ResumeKeyboardHook) then
-      ResumeKeyboardHook;
+    if PauseHookForReplacement then
+    begin
+      AtomicDecrement(InjectingInput);
+      if Assigned(ResumeKeyboardHook) then
+        ResumeKeyboardHook;
+    end;
   end;
 end;
 

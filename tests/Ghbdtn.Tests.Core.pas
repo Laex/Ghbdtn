@@ -99,6 +99,10 @@ type
     procedure EnglishReadingMayGiveUpEdgeKeysAtAPrice;
     [Test]
     procedure RussianReadingKeepsEveryKey;
+    [Test]
+    procedure RussianWordEndingInPunctuationKeySplitsOffTheMark;
+    [Test]
+    procedure RussianWordEndingInLetterOfItsOwnStaysWhole;
   end;
 
   [TestFixture]
@@ -180,6 +184,10 @@ type
     procedure UsesHigherMarginForUnknownLayout;
     [Test]
     procedure ConvertsWordsWithLettersOnPunctuationKeys;
+    [Test]
+    procedure ConvertsRussianWordsInsideEdgeKeysOfPunctuation;
+    [Test]
+    procedure ShortWordWithLetterKeyAtTheEdgeIsNotAFunctionWord;
     [Test]
     procedure KeepsEnglishWordsWithPunctuationAroundThem;
     [Test]
@@ -278,6 +286,8 @@ type
     procedure CapturesReplayOnlyWhilePending;
     [Test]
     procedure PreservesReplayOrder;
+    [Test]
+    procedure WorkWaitsForKeysTypedBeforeIt;
     [Test]
     procedure RecognizesOwnInputSignature;
     [Test]
@@ -669,6 +679,44 @@ begin
   Assert.AreEqual(Reading.Cost, Reading.PlainCost);
 end;
 
+procedure TReadingTests.RussianWordEndingInPunctuationKeySplitsOffTheMark;
+
+  procedure AssertMark(const AWord: string; AExpected: Char);
+  var
+    Mark: Char;
+  begin
+    Assert.IsTrue(TryRussianTrailingPunctuation(AWord, Mark), AWord);
+    Assert.AreEqual(AExpected, Mark, AWord);
+  end;
+
+begin
+  AssertMark('приветб', ',');
+  AssertMark('приветю', '.');
+  AssertMark('приветж', ';');
+  AssertMark('приветЖ', ':');
+  AssertMark('приветъ', ']');
+  AssertMark('приветэ', '''');
+  AssertMark('приветЭ', '"');
+  AssertMark('приветё', '`');
+  AssertMark('Приветб', ',');
+  AssertMark('сообщениеб', ',');
+end;
+
+procedure TReadingTests.RussianWordEndingInLetterOfItsOwnStaysWhole;
+var
+  Mark: Char;
+begin
+  Assert.IsFalse(TryRussianTrailingPunctuation('нож', Mark), 'нож');
+  Assert.IsFalse(TryRussianTrailingPunctuation('моё', Mark), 'моё');
+  Assert.IsFalse(TryRussianTrailingPunctuation('своё', Mark), 'своё');
+  Assert.IsFalse(TryRussianTrailingPunctuation('гараж', Mark), 'гараж');
+  Assert.IsFalse(TryRussianTrailingPunctuation('рубль', Mark), 'рубль');
+  Assert.IsFalse(TryRussianTrailingPunctuation('любовь', Mark), 'любовь');
+  Assert.IsFalse(TryRussianTrailingPunctuation('привет', Mark), 'привет');
+  Assert.IsFalse(TryRussianTrailingPunctuation('об', Mark), 'об');
+  Assert.IsFalse(TryRussianTrailingPunctuation('hello,', Mark), 'hello,');
+end;
+
 procedure TAnalyzerTests.ConvertsWordsWithLettersOnPunctuationKeys;
 
   procedure AssertConverts(const ATyped, AExpected: string);
@@ -699,6 +747,39 @@ begin
   // A word of the other layout is found when the layout is not known as well.
   Assert.IsTrue(AnalyzeWord(',jkmijq', lkUnknown).NeedsSwitch);
   Assert.AreEqual('большой', AnalyzeWord(',jkmijq', lkUnknown).ConvertedText);
+end;
+
+procedure TAnalyzerTests.ConvertsRussianWordsInsideEdgeKeysOfPunctuation;
+
+  procedure AssertConverts(const ATyped, AExpected: string);
+  var
+    Analysis: TAnalysisResult;
+  begin
+    Analysis := AnalyzeWord(ATyped, lkEN);
+    Assert.IsTrue(Analysis.NeedsSwitch, ATyped);
+    Assert.AreEqual(AExpected, Analysis.ConvertedText, ATyped);
+  end;
+
+begin
+  AssertConverts('[ghbdtn]', '[привет]');
+  AssertConverts('''ghbdtn''', '''привет''');
+  AssertConverts('[ghbdtn', '[привет');
+  AssertConverts('ghbdtn]', 'привет]');
+  AssertConverts('(ghbdtn)', '(привет)');
+  AssertConverts('Ghbdtn,', 'Привет,');
+end;
+
+procedure TAnalyzerTests.ShortWordWithLetterKeyAtTheEdgeIsNotAFunctionWord;
+var
+  Analysis: TAnalysisResult;
+begin
+  // "'nj" is "это"; without the first key it would be the function word "то",
+  // which is left alone at the start of a phrase.
+  Analysis := AnalyzeWord('''nj', lkEN, hmBalanced, nil, nil, EmptyPhrase);
+  Assert.IsTrue(Analysis.NeedsSwitch);
+  Assert.AreEqual('это', Analysis.ConvertedText);
+  Assert.IsFalse(AnalyzeWord('nj', lkEN, hmBalanced, nil, nil,
+    EmptyPhrase).NeedsSwitch);
 end;
 
 procedure TAnalyzerTests.KeepsEnglishWordsWithPunctuationAroundThem;
@@ -2175,10 +2256,42 @@ begin
     Queue.TryCaptureReplay(Input);
     Input.VirtualKey := Ord('B');
     Queue.TryCaptureReplay(Input);
+    Assert.IsTrue(Queue.TryDequeueWork(Work));
     Assert.IsTrue(Queue.TryDequeueReplay(Input));
     Assert.AreEqual(Integer(Ord('A')), Integer(Input.VirtualKey));
     Assert.IsTrue(Queue.TryDequeueReplay(Input));
     Assert.AreEqual(Integer(Ord('B')), Integer(Input.VirtualKey));
+  finally
+    Queue.Free;
+  end;
+end;
+
+procedure TInputQueueTests.WorkWaitsForKeysTypedBeforeIt;
+var
+  Queue: TInputQueue;
+  First, Second: TInputWorkItem;
+  Input: TQueuedInput;
+begin
+  Queue := TInputQueue.Create;
+  try
+    FillChar(First, SizeOf(First), 0);
+    First.OldWordLength := 1;
+    Second := First;
+    Second.OldWordLength := 2;
+    Queue.EnqueueWork(First);
+    Input.ScanCode := 0;
+    Input.Flags := 0;
+    Input.VirtualKey := Ord('A');
+    Queue.TryCaptureReplay(Input);
+    Queue.EnqueueWork(Second);
+    Assert.IsTrue(Queue.TryDequeueWork(First));
+    Assert.AreEqual(1, First.OldWordLength);
+    // The second item was queued after the key, so the key goes first.
+    Assert.IsFalse(Queue.TryDequeueWork(Second));
+    Assert.IsTrue(Queue.TryDequeueReplay(Input));
+    Assert.IsFalse(Queue.TryDequeueReplay(Input));
+    Assert.IsTrue(Queue.TryDequeueWork(Second));
+    Assert.AreEqual(2, Second.OldWordLength);
   finally
     Queue.Free;
   end;

@@ -51,6 +51,7 @@ const
   ActivateWaitMs = 500;
   ActivateSettleMs = 40;
   SelectionCopyAttempts = 3;
+  LayoutSwitchWaitMs = 250;
   MaxSelectionChars = 4096;
 
 constructor TInputWorker.Create(AQueue: TInputQueue);
@@ -90,6 +91,7 @@ begin
   if AItem.KeepLayout then
     Exit;
   SwitchForegroundKeyboardLayout(AItem.TargetLang);
+  WaitForForegroundLang(AItem.TargetLang, LayoutSwitchWaitMs);
   if AItem.PlaySwitchSound then
     PlaySwitchBeep(AItem.TargetLang);
 end;
@@ -581,6 +583,7 @@ begin
       if (TargetLang <> lkUnknown) and IsTargetWindowValid(AItem.TargetWindow) then
       begin
         SwitchForegroundKeyboardLayout(TargetLang);
+        WaitForForegroundLang(TargetLang, LayoutSwitchWaitMs);
         if AItem.PlaySwitchSound then
           PlaySwitchBeep(TargetLang);
       end;
@@ -667,6 +670,7 @@ begin
       if (TargetLang <> lkUnknown) and IsTargetWindowValid(AItem.TargetWindow) then
       begin
         SwitchForegroundKeyboardLayout(TargetLang);
+        WaitForForegroundLang(TargetLang, LayoutSwitchWaitMs);
         if AItem.PlaySwitchSound then
           PlaySwitchBeep(TargetLang);
       end;
@@ -701,6 +705,7 @@ begin
       if IsTargetWindowValid(AItem.TargetWindow) then
       begin
         SwitchForegroundKeyboardLayout(AItem.TargetLang);
+        WaitForForegroundLang(AItem.TargetLang, LayoutSwitchWaitMs);
         if AItem.PlaySwitchSound then
           PlaySwitchBeep(AItem.TargetLang);
       end;

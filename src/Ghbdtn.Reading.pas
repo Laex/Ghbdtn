@@ -37,6 +37,23 @@ function ReadAsEnglish(const ALower: string): TReading;
   it from the English layout. }
 function ReadAsRussian(const ALower: string): TReading;
 
+{ ATypedLower is a lowercase text typed on the English layout. Its Russian
+  reading may leave any of the edge keys that type Russian letters as the
+  punctuation they are on the English layout ("[ghbdtn]" is "[привет]", not
+  "хприветъ"), at a price. AStart and AStop are the first and the last
+  character of ATypedLower that are read as Russian; Core is that part
+  converted. }
+function ReadAsRussianKeepingEdges(const ATypedLower: string;
+  out AStart, AStop: Integer): TReading;
+
+{ AWord is a Russian word as typed, whose last letter is on the key of a
+  punctuation mark of the English layout (б , ю . ж ; Ж : ъ ] э ' Э " ё `). When the word
+  reads better as a shorter word followed by that mark, APunct is the mark:
+  a word switched to Russian before its end leaves the mark's key on the
+  Russian layout, where it is a letter. }
+function TryRussianTrailingPunctuation(const AWord: string;
+  out APunct: Char): Boolean;
+
 implementation
 
 uses
@@ -79,6 +96,81 @@ end;
 function ReadAsRussian(const ALower: string): TReading;
 begin
   Result := ReadWord(ALower, lkRU);
+end;
+
+function ReadAsRussianKeepingEdges(const ATypedLower: string;
+  out AStart, AStop: Integer): TReading;
+var
+  First, Last, Start, Stop, I, Trimmed: Integer;
+  Candidate: TReading;
+begin
+  AStart := 1;
+  AStop := Length(ATypedLower);
+  Result := ReadAsRussian(ConvertStringSwap(ATypedLower).ToLower);
+  First := 1;
+  Last := Length(ATypedLower);
+  while (First <= Last) and IsRussianLetterKey(ATypedLower[First]) do
+    Inc(First);
+  while (Last >= First) and IsRussianLetterKey(ATypedLower[Last]) do
+    Dec(Last);
+  if First > Last then
+    Exit;
+  for Start := 1 to First do
+    for Stop := Last to Length(ATypedLower) do
+    begin
+      if (Start = 1) and (Stop = Length(ATypedLower)) then
+        Continue;
+      Candidate := ReadAsRussian(ConvertStringSwap(
+        Copy(ATypedLower, Start, Stop - Start + 1)).ToLower);
+      Trimmed := 0;
+      for I := 1 to Start - 1 do
+        Inc(Trimmed, PunctuationCost(ATypedLower[I]));
+      for I := Stop + 1 to Length(ATypedLower) do
+        Inc(Trimmed, PunctuationCost(ATypedLower[I]));
+      Inc(Candidate.Cost, Trimmed);
+      if Candidate.Cost < Result.Cost then
+      begin
+        Result := Candidate;
+        AStart := Start;
+        AStop := Stop;
+      end;
+    end;
+end;
+
+function TryRussianTrailingPunctuation(const AWord: string;
+  out APunct: Char): Boolean;
+var
+  Stem: string;
+  Whole: TReading;
+  I: Integer;
+begin
+  Result := False;
+  APunct := #0;
+  // A one- or two-letter stem is too short to tell "нож" from "но;".
+  if Length(AWord) < 4 then
+    Exit;
+  case AWord[Length(AWord)] of
+    'б': APunct := ',';
+    'ю': APunct := '.';
+    'ж': APunct := ';';
+    'Ж': APunct := ':';
+    'ъ': APunct := ']';
+    'э': APunct := '''';
+    'Э': APunct := '"';
+    'ё': APunct := '`';
+  else
+    Exit;
+  end;
+  for I := 1 to Length(AWord) do
+    if not (((AWord[I] >= 'А') and (AWord[I] <= 'я')) or (AWord[I] = 'Ё') or
+            (AWord[I] = 'ё')) then
+      Exit;
+  Whole := ReadAsRussian(AWord.ToLower);
+  if Whole.Listed then
+    Exit;
+  Stem := Copy(AWord, 1, Length(AWord) - 1);
+  Result := ReadAsRussian(Stem.ToLower).Cost + PunctuationCost(APunct) <
+    Whole.Cost;
 end;
 
 function ReadAsEnglish(const ALower: string): TReading;
