@@ -931,9 +931,9 @@ begin
   FDoubleShift := AddToggle(FMainPanel, AY,
     'Двойной Left Shift: конвертировать слово или выделение');
   FDoubleCtrl := AddToggle(FMainPanel, AY,
-    'Двойной Ctrl: конвертировать набранную строку');
+    'Двойной Left Ctrl: конвертировать набранную строку');
   FRightCtrlSwitch := AddToggle(FMainPanel, AY,
-    'Right Ctrl: переключать раскладку одним нажатием');
+    'Одинарный Right Ctrl: переключает раскладку');
 
   AddSection(FMainPanel, AY, 'Звук и подсказки');
   FSoundSwitch := AddToggle(FMainPanel, AY, 'Звук при переключении');

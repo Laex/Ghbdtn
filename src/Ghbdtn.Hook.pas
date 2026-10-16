@@ -2269,11 +2269,19 @@ begin
 
   if Kbd^.vkCode in [VK_CONTROL, VK_LCONTROL, VK_RCONTROL] then
   begin
-    TrackCtrlTap(IsKeyDown, IsKeyUp);
+    // The double Ctrl gesture belongs to the left key; the right key only
+    // has the single-tap layout switch.
     if Kbd^.vkCode = VK_RCONTROL then
-      TrackRightCtrlTap(IsKeyDown, IsKeyUp)
+    begin
+      FCtrlClean := False;
+      FCtrlTapTick := 0;
+      TrackRightCtrlTap(IsKeyDown, IsKeyUp);
+    end
     else
+    begin
+      TrackCtrlTap(IsKeyDown, IsKeyUp);
       FRCtrlClean := False;
+    end;
   end
   else if IsKeyDown then
   begin
