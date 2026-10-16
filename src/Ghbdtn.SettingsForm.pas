@@ -781,6 +781,7 @@ type
     FPauseFullscreen: TSwitch;
     FEnglishSecure: TSwitch;
     FDoubleCtrl: TSwitch;
+    FRightCtrlSwitch: TSwitch;
     FEarlySwitch: TSwitch;
     FEarlyLetters: TComboBox;
     FHintFlash: TSwitch;
@@ -931,6 +932,8 @@ begin
     'Двойной Left Shift: конвертировать слово или выделение');
   FDoubleCtrl := AddToggle(FMainPanel, AY,
     'Двойной Ctrl: конвертировать набранную строку');
+  FRightCtrlSwitch := AddToggle(FMainPanel, AY,
+    'Right Ctrl: переключать раскладку одним нажатием');
 
   AddSection(FMainPanel, AY, 'Звук и подсказки');
   FSoundSwitch := AddToggle(FMainPanel, AY, 'Звук при переключении');
@@ -1131,6 +1134,7 @@ begin
   SetOn(FPauseFullscreen, AppSettings.PauseInFullscreen);
   SetOn(FEnglishSecure, AppSettings.EnglishInSecureFields);
   SetOn(FDoubleCtrl, AppSettings.DoubleCtrlEnabled);
+  SetOn(FRightCtrlSwitch, AppSettings.RightCtrlSwitchEnabled);
   SetOn(FEarlySwitch, AppSettings.EarlySwitchEnabled);
   FEarlyLetters.ItemIndex := AppSettings.EarlySwitchLetters - EarlyLettersMin;
   SetOn(FHintFlash, AppSettings.CaretHintFlash);
@@ -1153,6 +1157,7 @@ begin
   AppSettings.PauseInFullscreen := FPauseFullscreen.Checked;
   AppSettings.EnglishInSecureFields := FEnglishSecure.Checked;
   AppSettings.DoubleCtrlEnabled := FDoubleCtrl.Checked;
+  AppSettings.RightCtrlSwitchEnabled := FRightCtrlSwitch.Checked;
   AppSettings.EarlySwitchEnabled := FEarlySwitch.Checked;
   if FEarlyLetters.ItemIndex >= 0 then
     AppSettings.EarlySwitchLetters := FEarlyLetters.ItemIndex + EarlyLettersMin;

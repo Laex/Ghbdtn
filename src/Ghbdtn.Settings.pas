@@ -71,6 +71,7 @@ type
     FPauseInFullscreen: Boolean;
     FEnglishInSecureFields: Boolean;
     FDoubleCtrlEnabled: Boolean;
+    FRightCtrlSwitchEnabled: Boolean;
     FEarlySwitchEnabled: Boolean;
     FEarlySwitchLetters: Integer;
     FApplicationRules: TObjectList<TApplicationRule>;
@@ -127,6 +128,8 @@ type
     procedure SetEnglishInSecureFields(AValue: Boolean);
     function GetDoubleCtrlEnabled: Boolean;
     procedure SetDoubleCtrlEnabled(AValue: Boolean);
+    function GetRightCtrlSwitchEnabled: Boolean;
+    procedure SetRightCtrlSwitchEnabled(AValue: Boolean);
     function GetEarlySwitchEnabled: Boolean;
     procedure SetEarlySwitchEnabled(AValue: Boolean);
     function GetEarlySwitchLetters: Integer;
@@ -201,6 +204,7 @@ type
     property PauseInFullscreen: Boolean read GetPauseInFullscreen write SetPauseInFullscreen;
     property EnglishInSecureFields: Boolean read GetEnglishInSecureFields write SetEnglishInSecureFields;
     property DoubleCtrlEnabled: Boolean read GetDoubleCtrlEnabled write SetDoubleCtrlEnabled;
+    property RightCtrlSwitchEnabled: Boolean read GetRightCtrlSwitchEnabled write SetRightCtrlSwitchEnabled;
     property EarlySwitchEnabled: Boolean read GetEarlySwitchEnabled write SetEarlySwitchEnabled;
     property EarlySwitchLetters: Integer read GetEarlySwitchLetters write SetEarlySwitchLetters;
   end;
@@ -396,6 +400,7 @@ begin
   FPauseInFullscreen := True;
   FEnglishInSecureFields := True;
   FDoubleCtrlEnabled := True;
+  FRightCtrlSwitchEnabled := False;
   FEarlySwitchEnabled := False;
   FEarlySwitchLetters := EarlyLettersDefault;
   FCaseFixKept.Clear;
@@ -619,6 +624,18 @@ procedure TSettings.SetDoubleCtrlEnabled(AValue: Boolean);
 begin
   FLock.Acquire;
   try FDoubleCtrlEnabled := AValue; finally FLock.Release; end;
+end;
+
+function TSettings.GetRightCtrlSwitchEnabled: Boolean;
+begin
+  FLock.Acquire;
+  try Result := FRightCtrlSwitchEnabled; finally FLock.Release; end;
+end;
+
+procedure TSettings.SetRightCtrlSwitchEnabled(AValue: Boolean);
+begin
+  FLock.Acquire;
+  try FRightCtrlSwitchEnabled := AValue; finally FLock.Release; end;
 end;
 
 function TSettings.GetEarlySwitchEnabled: Boolean;
@@ -848,6 +865,7 @@ begin
     Root.TryGetValue<Boolean>('PauseInFullscreen', FPauseInFullscreen);
     Root.TryGetValue<Boolean>('EnglishInSecureFields', FEnglishInSecureFields);
     Root.TryGetValue<Boolean>('DoubleCtrlEnabled', FDoubleCtrlEnabled);
+    Root.TryGetValue<Boolean>('RightCtrlSwitchEnabled', FRightCtrlSwitchEnabled);
     Root.TryGetValue<Boolean>('EarlySwitchEnabled', FEarlySwitchEnabled);
     Root.TryGetValue<Integer>('EarlySwitchLetters', FEarlySwitchLetters);
     FEarlySwitchLetters := Min(Max(FEarlySwitchLetters, EarlyLettersMin),
@@ -1068,6 +1086,8 @@ begin
     Root.AddPair('PauseInFullscreen', TJSONBool.Create(FPauseInFullscreen));
     Root.AddPair('EnglishInSecureFields', TJSONBool.Create(FEnglishInSecureFields));
     Root.AddPair('DoubleCtrlEnabled', TJSONBool.Create(FDoubleCtrlEnabled));
+    Root.AddPair('RightCtrlSwitchEnabled',
+      TJSONBool.Create(FRightCtrlSwitchEnabled));
     Root.AddPair('EarlySwitchEnabled', TJSONBool.Create(FEarlySwitchEnabled));
     Root.AddPair('EarlySwitchLetters', TJSONNumber.Create(FEarlySwitchLetters));
     KeptArray := TJSONArray.Create;

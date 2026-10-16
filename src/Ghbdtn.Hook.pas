@@ -91,6 +91,9 @@ type
     FCtrlClean: Boolean;
     FCtrlDownTick: UInt64;
     FCtrlTapTick: UInt64;
+    FRCtrlDown: Boolean;
+    FRCtrlClean: Boolean;
+    FRCtrlDownTick: UInt64;
     FIgnoredShiftClean: Boolean;
     FFullscreenCheckTick: UInt64;
     FFullscreenPaused: Boolean;
@@ -141,6 +144,8 @@ type
     procedure NoteLineDelimiter(AVKCode: DWORD; APunctuation: Char);
     procedure TrackCtrlTap(AIsKeyDown, AIsKeyUp: Boolean);
     procedure HandleDoubleCtrl;
+    procedure TrackRightCtrlTap(AIsKeyDown, AIsKeyUp: Boolean);
+    procedure HandleRightCtrlTap;
     function HandlePrintableKey(VKCode: DWORD; ALang: TLangKind): Boolean;
     function TryEarlySwitch(AVKCode: DWORD; ALang: TLangKind;
       const AProfile: TApplicationProfile): Boolean;
@@ -486,6 +491,7 @@ begin
   FLineText := '';
   FCtrlClean := False;
   FCtrlTapTick := 0;
+  FRCtrlClean := False;
   ClearLastConversion;
   FBackspaceRun := 0;
   FPendingDoubleShift := False;
@@ -1872,6 +1878,53 @@ begin
     FCtrlTapTick := Tick;
 end;
 
+{ A Right Ctrl press and release with no other key in between, held no longer
+  than a tap, switches the layout. }
+procedure TKbdHookManager.TrackRightCtrlTap(AIsKeyDown, AIsKeyUp: Boolean);
+var
+  Tick: UInt64;
+begin
+  Tick := GetTickCount64;
+  if AIsKeyDown then
+  begin
+    if not FRCtrlDown then
+    begin
+      FRCtrlDown := True;
+      FRCtrlClean := True;
+      FRCtrlDownTick := Tick;
+    end;
+    Exit;
+  end;
+  if not AIsKeyUp then
+    Exit;
+  FRCtrlDown := False;
+  if FRCtrlClean and (Tick - FRCtrlDownTick <= CtrlTapMaxHoldMs) then
+  begin
+    FRCtrlClean := False;
+    HandleRightCtrlTap;
+  end;
+  FRCtrlClean := False;
+end;
+
+procedure TKbdHookManager.HandleRightCtrlTap;
+var
+  Item: TInputWorkItem;
+begin
+  if not AppSettings.RightCtrlSwitchEnabled or
+     not CurrentApplicationEnabled then
+    Exit;
+  FillChar(Item, SizeOf(Item), 0);
+  Item.Kind := iwSwitchLayout;
+  if GetForegroundLangKind = lkRU then
+    Item.TargetLang := lkEN
+  else
+    Item.TargetLang := lkRU;
+  Item.TargetWindow := GetForegroundWindow;
+  Item.PlaySwitchSound := CurrentProfile.SoundOnSwitch;
+  ResetContext;
+  EnqueueWork(Item);
+end;
+
 { Double Ctrl: the selection if there is one, otherwise everything typed since
   the caret last moved, otherwise the word at the caret. }
 procedure TKbdHookManager.HandleDoubleCtrl;
@@ -2215,12 +2268,19 @@ begin
     Exit;
 
   if Kbd^.vkCode in [VK_CONTROL, VK_LCONTROL, VK_RCONTROL] then
-    TrackCtrlTap(IsKeyDown, IsKeyUp)
+  begin
+    TrackCtrlTap(IsKeyDown, IsKeyUp);
+    if Kbd^.vkCode = VK_RCONTROL then
+      TrackRightCtrlTap(IsKeyDown, IsKeyUp)
+    else
+      FRCtrlClean := False;
+  end
   else if IsKeyDown then
   begin
     // Any other key between the two taps spoils the gesture.
     FCtrlClean := False;
     FCtrlTapTick := 0;
+    FRCtrlClean := False;
   end;
 
   if Kbd^.vkCode = VK_LSHIFT then
