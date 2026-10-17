@@ -1543,10 +1543,12 @@ end;
 
 function IsPunctuationKey(AVirtualKey: DWORD): Boolean;
 begin
-  // The keys of ; ' [ ] , . ` are Russian letters (ж э х ъ б ю ё), so they
+  // The keys of ; : ' [ ] , . ` are Russian letters (ж Ж э х ъ б ю ё), so they
   // stay inside the word whatever the layout: nfr;t -> также, ,sk -> был,
-  // vj. -> мою. Whether such a key is punctuation of an English word or a
-  // letter of a Russian one is decided when the word ends.
+  // :bpym -> Жизнь. Whether such a key is punctuation of an English word or a
+  // letter of a Russian one is decided when the word ends. Shift+6, which
+  // also types ":" on the Russian layout, is a digit key and still ends the
+  // word.
   // Minus and plus are included: "-" and "+" end a word, "_" and "=" do not.
   Result := AVirtualKey in [VK_OEM_PLUS, VK_OEM_MINUS, VK_OEM_2, VK_OEM_5];
 end;
@@ -1587,11 +1589,6 @@ begin
   end;
   if AShifted then
     Result := ShiftedDigitPunctuation(AVirtualKey, ALang);
-  if Result <> #0 then
-    Exit;
-  // Colon on the English layout is Shift+;, the Russian letter "ж" unshifted.
-  if MapVirtualKeyToChar(AVirtualKey, AShifted, ALang) = ':' then
-    Result := ':';
 end;
 
 function DecisionNote(AMark: TDecisionMark): string;

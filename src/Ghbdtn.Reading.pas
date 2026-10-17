@@ -47,10 +47,10 @@ function ReadAsRussianKeepingEdges(const ATypedLower: string;
   out AStart, AStop: Integer): TReading;
 
 { AWord is a Russian word as typed, whose last letter is on the key of a
-  punctuation mark of the English layout (б , ю . ж ; Ж : ъ ] э ' Э " ё `). When the word
-  reads better as a shorter word followed by that mark, APunct is the mark:
-  a word switched to Russian before its end leaves the mark's key on the
-  Russian layout, where it is a letter. }
+  punctuation mark of the English layout. When the word reads better as a
+  shorter word followed by that mark, APunct is the mark: a word switched to
+  Russian before its end leaves the mark's key on the Russian layout, where
+  it is a letter. A final "х" is left alone: many Russian words end with it. }
 function TryRussianTrailingPunctuation(const AWord: string;
   out APunct: Char): Boolean;
 
@@ -62,10 +62,12 @@ uses
   Ghbdtn.WordFreq;
 
 const
-  // What it costs the English reading to treat an edge key as punctuation:
-  // a comma or a period after a word is common, other keys are rarer.
+  // What it costs the English reading to treat an edge key as punctuation.
+  // A comma or a period after a word is common. The other keys are rare: the
+  // price has to clear the switch margin even when the letters left behind
+  // are a very frequent English word ("to`" is "ещё", and "to" costs 24).
   CommaPunctuationCost = 16;
-  KeyPunctuationCost = 40;
+  KeyPunctuationCost = 48;
 
 function ReadWord(const AWord: string; ALang: TLangKind): TReading;
 var
@@ -151,13 +153,18 @@ begin
     Exit;
   case AWord[Length(AWord)] of
     'б': APunct := ',';
+    'Б': APunct := '<';
     'ю': APunct := '.';
+    'Ю': APunct := '>';
     'ж': APunct := ';';
     'Ж': APunct := ':';
     'ъ': APunct := ']';
+    'Ъ': APunct := '}';
     'э': APunct := '''';
     'Э': APunct := '"';
     'ё': APunct := '`';
+    'Ё': APunct := '~';
+    'Х': APunct := '{';
   else
     Exit;
   end;

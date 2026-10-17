@@ -602,12 +602,12 @@ procedure TLayoutTests.MarksTheKeysThatTypeRussianLetters;
 var
   C: Char;
 begin
-  for C in ',.;''[]`<>"{}~' do
+  for C in ',.;'':[]`<>"{}~' do
     Assert.IsTrue(IsRussianLetterKey(C), C);
-  for C in 'abcxyzABCXYZ0123456789 -_=/\?:!@#$%^&*()+' do
+  for C in 'abcxyzABCXYZ0123456789 -_=/\?!@#$%^&*()+' do
     Assert.IsFalse(IsRussianLetterKey(C), C);
   // Every such key types a letter on the Russian layout.
-  for C in ',.;''[]`<>"{}~' do
+  for C in ',.;'':[]`<>"{}~' do
     Assert.IsTrue(Ord(ConvertCharSwap(C)) > $0400, C);
 end;
 
@@ -698,6 +698,11 @@ begin
   AssertMark('приветэ', '''');
   AssertMark('приветЭ', '"');
   AssertMark('приветё', '`');
+  AssertMark('приветБ', '<');
+  AssertMark('приветЮ', '>');
+  AssertMark('приветХ', '{');
+  AssertMark('приветЪ', '}');
+  AssertMark('приветЁ', '~');
   AssertMark('Приветб', ',');
   AssertMark('сообщениеб', ',');
 end;
@@ -713,6 +718,7 @@ begin
   Assert.IsFalse(TryRussianTrailingPunctuation('рубль', Mark), 'рубль');
   Assert.IsFalse(TryRussianTrailingPunctuation('любовь', Mark), 'любовь');
   Assert.IsFalse(TryRussianTrailingPunctuation('привет', Mark), 'привет');
+  Assert.IsFalse(TryRussianTrailingPunctuation('приветх', Mark), 'приветх');
   Assert.IsFalse(TryRussianTrailingPunctuation('об', Mark), 'об');
   Assert.IsFalse(TryRussianTrailingPunctuation('hello,', Mark), 'hello,');
 end;
@@ -738,6 +744,15 @@ begin
   AssertConverts('''nj', 'это');
   AssertConverts('[jhjij', 'хорошо');
   AssertConverts('`krf', 'ёлка');
+  AssertConverts('to`', 'ещё');
+  AssertConverts(':bpym', 'Жизнь');
+  AssertConverts(':BPYM', 'ЖИЗНЬ');
+  AssertConverts('<SK', 'БЫЛ');
+  AssertConverts('ghbdtn:', 'привет:');
+  Assert.IsFalse(AnalyzeWord('hello:', lkEN).NeedsSwitch);
+  Assert.IsFalse(AnalyzeWord('C:', lkEN).NeedsSwitch);
+  Assert.IsFalse(AnalyzeWord('10:30', lkEN).NeedsSwitch);
+  Assert.IsFalse(AnalyzeWord('NFR:T', lkEN).NeedsSwitch);
   // The word ends with "ю", or has one inside.
   AssertConverts('cdj.', 'свою');
   AssertConverts(';bpym.', 'жизнью');
@@ -1268,6 +1283,22 @@ begin
   Assert.AreEqual(0, Start);
   Assert.AreEqual(6, Finish);
 
+  Assert.IsTrue(TryWordAtCaret(',sk', 0, Start, Finish));
+  Assert.AreEqual(0, Start);
+  Assert.AreEqual(3, Finish);
+  Assert.IsTrue(TryWordAtCaret('nfr;t', 3, Start, Finish));
+  Assert.AreEqual(0, Start);
+  Assert.AreEqual(5, Finish);
+  Assert.IsTrue(TryWordAtCaret('cdj.', 1, Start, Finish));
+  Assert.AreEqual(0, Start);
+  Assert.AreEqual(4, Finish);
+  Assert.IsTrue(TryWordAtCaret('hello,', 2, Start, Finish));
+  Assert.AreEqual(0, Start);
+  Assert.AreEqual(5, Finish);
+  Assert.IsTrue(TryWordAtCaret('[ghbdtn]', 2, Start, Finish));
+  Assert.AreEqual(1, Start);
+  Assert.AreEqual(7, Finish);
+
   Assert.IsFalse(TryWordAtCaret('', 0, Start, Finish));
   Assert.IsFalse(TryWordAtCaret('hello world', -1, Start, Finish));
 end;
@@ -1394,6 +1425,9 @@ begin
   Assert.IsFalse(AnalyzeWord('folder/file', lkEN).NeedsSwitch);
   Assert.IsFalse(AnalyzeWord('abc123', lkEN).NeedsSwitch);
   Assert.IsFalse(AnalyzeWord('API', lkEN).NeedsSwitch);
+  Assert.IsFalse(AnalyzeWord('OK.', lkEN).NeedsSwitch);
+  Assert.IsFalse(AnalyzeWord('IT.', lkEN).NeedsSwitch);
+  Assert.IsFalse(AnalyzeWord('AT.', lkEN).NeedsSwitch);
 end;
 
 procedure TAnalyzerTests.ConvertsRussianTailAfterEnglishPrefix;

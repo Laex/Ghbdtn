@@ -102,8 +102,8 @@ const
   PlausibleRussianLetterCost = 24;
   PlausibleEnglishLetterCost = 26;
   // What a capital Russian letter inside a word costs: the English layout
-  // types it with Shift on the same keys as "<" or "{", so code such as a<b
-  // would otherwise read as a Russian word.
+  // types it with Shift on the same keys as ":", "<" or "{", so code such as
+  // a:b or a<b would otherwise read as a Russian word.
   InnerCapitalKeyCost = 48;
   // The beginning of a word is judged only while it has at most this many
   // letters.
@@ -197,7 +197,7 @@ var
 begin
   Result := 0;
   for I := 2 to Length(AText) do
-    if CharInSet(AText[I], ['<', '>', '"', '{', '}', '~']) then
+    if CharInSet(AText[I], [':', '<', '>', '"', '{', '}', '~']) then
       Inc(Result);
 end;
 
@@ -253,6 +253,38 @@ begin
   for I := 1 to Length(AText) do
     if (AText[I] <> 'ё') and (AText[I] <> 'Ё') then
       Exit(False);
+end;
+
+function HasShiftedLetterKey(const AText: string): Boolean;
+var
+  I: Integer;
+begin
+  // Shift of ; ' [ ] , . ` : the capitals Ж Э Х Ъ Б Ю Ё. A trailing "."
+  // after "OK" is not one of these.
+  for I := 1 to Length(AText) do
+    if CharInSet(AText[I], [':', '<', '>', '"', '{', '}', '~']) then
+      Exit(True);
+  Result := False;
+end;
+
+{ Two to four capitals and nothing else, such as "API" or "SK". }
+function IsShortAbbreviation(const S: string): Boolean;
+var
+  I, LetterCount: Integer;
+  C: Char;
+begin
+  Result := False;
+  LetterCount := 0;
+  for I := 1 to Length(S) do
+  begin
+    C := S[I];
+    if not C.IsLetter then
+      Exit;
+    if not C.IsUpper then
+      Exit;
+    Inc(LetterCount);
+  end;
+  Result := (LetterCount >= 2) and (LetterCount <= 4);
 end;
 
 function IsProtectedToken(const S: string): Boolean;
@@ -359,7 +391,11 @@ begin
     TraceHeuristic(Head + ' reason=code_fence switch=1 target=EN');
     Exit;
   end;
-  if IsProtectedToken(CleanW) then
+  // ":BPYM" is "ЖИЗНЬ" and "<SK" is "БЫЛ": the capital was stripped before
+  // the abbreviation check, so the key has to be seen on the original word.
+  // A colon between other letters stays protected: it is also "key:value".
+  if IsProtectedToken(CleanW) and
+     not (IsShortAbbreviation(CleanW) and HasShiftedLetterKey(AWord)) then
   begin
     Result.Mark := dmLeave;
     TraceHeuristic(Head + ' reason=protected switch=0');
@@ -431,7 +467,10 @@ begin
     OtherLayout := lkRU;
     Typed := ReadAsEnglish(ReadText);
     Other := ReadAsRussianKeepingEdges(ReadText, KeptStart, KeptStop);
-    Inc(Other.Cost, InnerCapitalKeyCost * InnerCapitalKeyCount(ReadCased));
+    // A shifted key kept as a letter is a capital inside the word. A key
+    // given up as punctuation is not part of that word.
+    Inc(Other.Cost, InnerCapitalKeyCost * InnerCapitalKeyCount(
+      Copy(ReadCased, KeptStart, KeptStop - KeptStart + 1)));
   end
   else
   begin
@@ -800,36 +839,89 @@ begin
     Result := ConvertTokens(AText, AMode, ANeverSwitch, APreferSwitch, True);
 end;
 
-function IsLayoutLetter(C: Char): Boolean;
+function IsPlainLetter(C: Char): Boolean;
 begin
   Result := CharInSet(C, ['a'..'z', 'A'..'Z']) or
     ((C >= 'А') and (C <= 'я')) or (C = 'Ё') or (C = 'ё');
 end;
 
+function IsCaretWordChar(C: Char): Boolean;
+begin
+  Result := IsPlainLetter(C) or IsRussianLetterKey(C);
+end;
+
 function TryWordAtCaret(const AText: string; ACaret: Integer;
   out AStart, AEnd: Integer): Boolean;
 var
-  Pos: Integer;
+  Seed, BlobStart, BlobEnd, PlainStart, PlainEnd: Integer;
+  Blob: string;
+  Analysis: TAnalysisResult;
+  Reading: TReading;
+  KeptStart, KeptStop: Integer;
+
+  function PlainRun: Boolean;
+  begin
+    Result := PlainStart <> 0;
+    if not Result then
+      Exit;
+    if (ACaret < PlainStart - 1) or (ACaret > PlainEnd) then
+      Exit(False);
+    AStart := PlainStart - 1;
+    AEnd := PlainEnd;
+    Result := AEnd > AStart;
+  end;
+
 begin
   // ACaret is a 0-based insertion point, the same kind EM_GETSEL returns.
+  // AStart is the first character and AEnd is the one after the last.
   Result := False;
   AStart := 0;
   AEnd := 0;
   if (AText = '') or (ACaret < 0) or (ACaret > Length(AText)) then
     Exit;
-  if (ACaret < Length(AText)) and IsLayoutLetter(AText[ACaret + 1]) then
-    Pos := ACaret + 1
-  else if (ACaret > 0) and IsLayoutLetter(AText[ACaret]) then
-    Pos := ACaret
+  if (ACaret < Length(AText)) and IsCaretWordChar(AText[ACaret + 1]) then
+    Seed := ACaret + 1
+  else if (ACaret > 0) and IsCaretWordChar(AText[ACaret]) then
+    Seed := ACaret
   else
     Exit;
-  while (Pos > 1) and IsLayoutLetter(AText[Pos - 1]) do
-    Dec(Pos);
-  AStart := Pos - 1;
-  while (Pos <= Length(AText)) and IsLayoutLetter(AText[Pos]) do
-    Inc(Pos);
-  AEnd := Pos - 1;
-  Result := AEnd > AStart;
+
+  BlobStart := Seed;
+  BlobEnd := Seed;
+  while (BlobStart > 1) and IsCaretWordChar(AText[BlobStart - 1]) do
+    Dec(BlobStart);
+  while (BlobEnd < Length(AText)) and IsCaretWordChar(AText[BlobEnd + 1]) do
+    Inc(BlobEnd);
+
+  PlainStart := 0;
+  PlainEnd := 0;
+  if (ACaret < Length(AText)) and IsPlainLetter(AText[ACaret + 1]) then
+    PlainStart := ACaret + 1
+  else if (ACaret > 0) and IsPlainLetter(AText[ACaret]) then
+    PlainStart := ACaret;
+  if PlainStart <> 0 then
+  begin
+    PlainEnd := PlainStart;
+    while (PlainStart > 1) and IsPlainLetter(AText[PlainStart - 1]) do
+      Dec(PlainStart);
+    while (PlainEnd < Length(AText)) and IsPlainLetter(AText[PlainEnd + 1]) do
+      Inc(PlainEnd);
+  end;
+
+  Blob := Copy(AText, BlobStart, BlobEnd - BlobStart + 1);
+  Analysis := AnalyzeWord(Blob, TypedLayout(Blob, lkUnknown));
+  if Analysis.NeedsSwitch and (Analysis.TargetLang = lkRU) then
+  begin
+    Reading := ReadAsRussianKeepingEdges(Blob.ToLower, KeptStart, KeptStop);
+    if Reading.Valid and (KeptStop >= KeptStart) then
+    begin
+      AStart := BlobStart + KeptStart - 2;
+      AEnd := BlobStart + KeptStop - 1;
+      if (AEnd > AStart) and (ACaret >= AStart) and (ACaret <= AEnd) then
+        Exit(True);
+    end;
+  end;
+  Result := PlainRun;
 end;
 
 function NormalizeLineBreaks(const AText: string): string;

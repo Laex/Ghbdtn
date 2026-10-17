@@ -32,7 +32,8 @@ function MapVirtualKeyToChar(VKCode: DWORD; IsShift: Boolean; ALang: TLangKind):
 
 // Whether a character of the English layout is typed by a key that is a
 // Russian letter on the Russian layout: , . ; ' [ ] ` and the shifted forms
-// of those. Such a character is punctuation or part of a Russian word.
+// of those, including ":" (Shift+;, the capital "Ж"). Such a character is
+// punctuation or part of a Russian word.
 function IsRussianLetterKey(AChar: Char): Boolean;
 
 implementation
@@ -217,8 +218,8 @@ end;
 
 function IsRussianLetterKey(AChar: Char): Boolean;
 begin
-  Result := CharInSet(AChar, [',', '.', ';', '''', '[', ']', '`', '<', '>', '"',
-    '{', '}', '~']);
+  Result := CharInSet(AChar, [',', '.', ';', '''', '[', ']', '`', ':', '<', '>',
+    '"', '{', '}', '~']);
 end;
 
 function MapVirtualKeyToChar(VKCode: DWORD; IsShift: Boolean; ALang: TLangKind): Char;
