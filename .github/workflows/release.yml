@@ -1,0 +1,42 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - "v*"
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    runs-on: [self-hosted, Windows, delphi]
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+
+      - name: Build
+        shell: cmd
+        run: powershell -NoProfile -ExecutionPolicy Bypass -File build-release.ps1 %GITHUB_REF_NAME%
+
+      - name: Test
+        shell: cmd
+        run: tests\build-tests.bat Release Win64
+
+      - name: Pack
+        shell: powershell
+        run: |
+          New-Item -ItemType Directory -Force -Path dist | Out-Null
+          $name = "Ghbdtn-$env:GITHUB_REF_NAME-win64.zip"
+          $zip = Join-Path dist $name
+          if (Test-Path -LiteralPath $zip) { Remove-Item -LiteralPath $zip }
+          Compress-Archive -Path bin\Ghbdtn.exe -DestinationPath $zip
+          $hash = (Get-FileHash -Algorithm SHA256 -LiteralPath $zip).Hash.ToLower()
+          Set-Content -LiteralPath ($zip + '.sha256') -Value ($hash + ' *' + $name) -Encoding ascii
+
+      - name: Publish
+        shell: powershell
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          $zip = Join-Path dist "Ghbdtn-$env:GITHUB_REF_NAME-win64.zip"
+          gh release create $env:GITHUB_REF_NAME $zip ($zip + '.sha256') --title $env:GITHUB_REF_NAME --generate-notes

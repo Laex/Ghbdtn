@@ -31,7 +31,15 @@ function AppVersionString: string;
 procedure WaitForPreviousInstance;
 procedure CleanupOldFiles(const AAppDir: string);
 
-{ The update check runs only when the program is started with --check-update. }
+{ upQuiet is the marker file alone. --check-update is upInteractive
+  even when the marker is also present. }
+type
+  TUpdatePrompt = (upNone, upQuiet, upInteractive);
+
+function UpdatePromptMode(ASwitch, AMarker: Boolean): TUpdatePrompt;
+
+{ --check-update shows every outcome. Ghbdtn.update next to the executable
+  checks quietly: a window appears only when a newer release is available. }
 function UpdateCheckRequested: Boolean;
 procedure StartUpdateCheck;
 procedure CancelUpdateCheck;
@@ -49,7 +57,8 @@ uses
   System.Net.URLClient,
   System.SyncObjs,
   System.Zip,
-  Vcl.Forms;
+  Vcl.Forms,
+  Ghbdtn.Diagnostics;
 
 const
   cUpdateRepo = 'Laex/Ghbdtn';
@@ -60,6 +69,7 @@ const
   cStagingDirName = '.update-staging';
   cWaitPidSwitch = '--wait-pid';
   cCheckUpdateSwitch = '--check-update';
+  cUpdateMarkerName = 'Ghbdtn.update';
 
 var
   GCheckStarted: Integer;
@@ -617,14 +627,45 @@ begin
     end;
 end;
 
-function UpdateCheckRequested: Boolean;
+function SwitchPresent(const ASwitch: string): Boolean;
 var
   I: Integer;
 begin
   for I := 1 to ParamCount do
-    if SameText(ParamStr(I), cCheckUpdateSwitch) then
+    if SameText(ParamStr(I), ASwitch) then
       Exit(True);
   Result := False;
+end;
+
+function UpdateSwitchRequested: Boolean;
+begin
+  Result := SwitchPresent(cCheckUpdateSwitch);
+end;
+
+function UpdateMarkerPresent: Boolean;
+begin
+  Result := TFile.Exists(TPath.Combine(ExtractFileDir(ParamStr(0)),
+    cUpdateMarkerName));
+end;
+
+function UpdatePromptMode(ASwitch, AMarker: Boolean): TUpdatePrompt;
+begin
+  if ASwitch then
+    Exit(upInteractive);
+  if AMarker then
+    Exit(upQuiet);
+  Result := upNone;
+end;
+
+function UpdateCheckRequested: Boolean;
+begin
+  Result := UpdatePromptMode(UpdateSwitchRequested, UpdateMarkerPresent) <> upNone;
+end;
+
+function SingleLine(const AText: string): string;
+begin
+  Result := StringReplace(StringReplace(AText, #13, ' ', [rfReplaceAll]),
+    #10, ' ', [rfReplaceAll]);
 end;
 
 procedure ShowUpdateMessage(const AText: string; AFlags: UINT);
@@ -640,7 +681,13 @@ begin
 end;
 
 procedure StartUpdateCheck;
+var
+  Interactive: Boolean;
 begin
+  Interactive := UpdatePromptMode(UpdateSwitchRequested,
+    UpdateMarkerPresent) = upInteractive;
+  if not UpdateCheckRequested then
+    Exit;
   if AppVersionString = '' then
     Exit;
   if TInterlocked.CompareExchange(GCheckStarted, 1, 0) <> 0 then
@@ -658,14 +705,20 @@ begin
           Exit;
         if not FetchLatestRelease(Release, Error) then
         begin
-          ShowUpdateMessage('Не удалось проверить обновления.' + sLineBreak +
-            Error, MB_ICONERROR);
+          if Interactive then
+            ShowUpdateMessage('Не удалось проверить обновления.' + sLineBreak +
+              Error, MB_ICONERROR)
+          else
+            LogDiagnostic(dlError, deUpdateCheckFailed, 0, SingleLine(Error));
           Exit;
         end;
         if not IsNewerVersion(Release.Version, AppVersionString) then
         begin
-          ShowUpdateMessage('Установлена последняя версия (' +
-            AppVersionString + ').', MB_ICONINFORMATION);
+          if Interactive then
+            ShowUpdateMessage('Установлена последняя версия (' +
+              AppVersionString + ').', MB_ICONINFORMATION)
+          else
+            LogDiagnostic(dlError, deUpdateCurrent, 0, AppVersionString);
           Exit;
         end;
         if Cancelled then
@@ -699,7 +752,10 @@ begin
               Application.Terminate;
           end);
       except
-        // a failed check stays quiet and must not take the process down
+        // The check must not take the process down.
+        on E: Exception do
+          if not Interactive then
+            LogDiagnostic(dlError, deUpdateCheckFailed, 0, SingleLine(E.Message));
       end;
     end) do
   begin

@@ -20,7 +20,9 @@ type
     deSingleInstanceFailed,
     deHeuristicDecision,
     deHookFailure,
-    deStaleWorkDropped
+    deStaleWorkDropped,
+    deUpdateCheckFailed,
+    deUpdateCurrent
   );
 
 procedure ConfigureDiagnostics(const AFilePath: string;
@@ -84,6 +86,8 @@ begin
     deHeuristicDecision: Result := 'heuristic_decision';
     deHookFailure: Result := 'hook_failure';
     deStaleWorkDropped: Result := 'stale_work_dropped';
+    deUpdateCheckFailed: Result := 'update_check_failed';
+    deUpdateCurrent: Result := 'update_current';
   else
     Result := 'unknown';
   end;

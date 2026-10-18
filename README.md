@@ -198,6 +198,7 @@ Ghbdtn – аналог Punto Switcher и Caramba Switcher, написанный
 ```text
 Ghbdtn.dpr, Ghbdtn.dproj   проект RAD Studio (Win64)
 build.bat                  сборка через MSBuild (Debug / Release)
+build-release.ps1          сборка Release: версия из тега vX.Y.Z, проверка обновлений
 src\                       исходники
 tests\                     модульные тесты (DUnitX)
 docs\images\               иллюстрации для README
@@ -236,6 +237,7 @@ bin\                       результат сборки, в репозито�
 ```bat
 .\build.bat                 :: Debug
 .\build.bat Release Win64   :: Release
+.\build-release.ps1 vX.Y.Z  :: Release с версией из тега и проверкой обновлений
 .\tests\build-tests.bat     :: сборка и запуск тестов
 ```
 

@@ -201,4 +201,5 @@
         <ProjectFileVersion>12</ProjectFileVersion>
     </ProjectExtensions>
     <Import Project="$(APPDATA)\Embarcadero\$(BDSAPPDATABASEDIR)\$(PRODUCTVERSION)\UserTools.proj" Condition="Exists('$(APPDATA)\Embarcadero\$(BDSAPPDATABASEDIR)\$(PRODUCTVERSION)\UserTools.proj')"/>
+    <Import Project="$(GhbdtnReleaseProps)" Condition="'$(GhbdtnReleaseProps)'!='' and Exists('$(GhbdtnReleaseProps)')"/>
 </Project>

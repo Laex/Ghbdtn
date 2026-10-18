@@ -66,6 +66,8 @@ type
     procedure FindsTheChecksumAssetOfThePackage;
     [Test]
     procedure ParsesChecksumFiles;
+    [Test]
+    procedure ChoosesQuietCheckOnlyForTheMarker;
   end;
 
   [TestFixture]
@@ -638,6 +640,9 @@ begin
   // A more frequent word costs less.
   Assert.IsTrue(WordCost('и', lkRU) < WordCost('привет', lkRU));
   Assert.IsTrue(WordCost('the', lkEN) < WordCost('hello', lkEN));
+  Assert.IsTrue(WordCost('еж', lkRU) >= 0);
+  Assert.AreEqual(WordCost('еж', lkRU), WordCost('ёж', lkRU));
+  Assert.IsTrue(WordCost('эх', lkRU) >= 0);
 end;
 
 procedure TReadingTests.ListedWordIsAsCheapAsItsListCost;
@@ -762,6 +767,23 @@ begin
   // A word of the other layout is found when the layout is not known as well.
   Assert.IsTrue(AnalyzeWord(',jkmijq', lkUnknown).NeedsSwitch);
   Assert.AreEqual('большой', AnalyzeWord(',jkmijq', lkUnknown).ConvertedText);
+  // Nothing but the keys of Russian letters is left to read as English.
+  AssertConverts('`;', 'ёж');
+  AssertConverts('''[', 'эх');
+  AssertConverts('t;', 'еж');
+  AssertConverts('~;', 'Ёж');
+  AssertConverts('"{', 'ЭХ');
+  Assert.AreEqual(Ord(dmDictionary), Ord(AnalyzeWord('`;', lkEN).Mark));
+  Assert.IsTrue(AnalyzeWord('`;', lkEN, hmCautious, nil).NeedsSwitch);
+  Assert.IsTrue(AnalyzeWord('`;', lkUnknown).NeedsSwitch);
+  Assert.IsFalse(AnalyzeWord('[]', lkEN).NeedsSwitch);
+  Assert.IsFalse(AnalyzeWord('<>', lkEN).NeedsSwitch);
+  Assert.IsFalse(AnalyzeWord('``', lkEN).NeedsSwitch);
+  Assert.IsFalse(AnalyzeWord(';`', lkEN).NeedsSwitch);
+  Assert.IsFalse(AnalyzeWord('`.', lkEN).NeedsSwitch);
+  Assert.IsFalse(AnalyzeWord(',.', lkEN).NeedsSwitch);
+  Assert.IsFalse(AnalyzeWord('ёж', lkRU).NeedsSwitch);
+  Assert.IsFalse(AnalyzeWord('эх', lkRU).NeedsSwitch);
 end;
 
 procedure TAnalyzerTests.ConvertsRussianWordsInsideEdgeKeysOfPunctuation;
@@ -2696,6 +2718,14 @@ begin
   Assert.AreEqual('https://example.invalid/sum', Release.ChecksumUrl);
   Assert.AreEqual('https://example.invalid/Ghbdtn-v0.2.0-win64.zip',
     Release.AssetUrl);
+end;
+
+procedure TUpdateTests.ChoosesQuietCheckOnlyForTheMarker;
+begin
+  Assert.IsTrue(UpdatePromptMode(False, False) = upNone);
+  Assert.IsTrue(UpdatePromptMode(True, False) = upInteractive);
+  Assert.IsTrue(UpdatePromptMode(True, True) = upInteractive);
+  Assert.IsTrue(UpdatePromptMode(False, True) = upQuiet);
 end;
 
 procedure TUpdateTests.ParsesChecksumFiles;

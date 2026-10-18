@@ -82,6 +82,8 @@ desktop.ini
 *.temp
 *.old
 .update-staging/
+Ghbdtn.update
+release.props
 
 # Keys, certificates, local secrets
 .env

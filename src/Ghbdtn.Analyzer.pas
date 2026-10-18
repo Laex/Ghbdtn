@@ -480,7 +480,24 @@ begin
   end;
   if not (Typed.Valid and Other.Valid) then
   begin
-    TraceHeuristic(Head + ' reason=no_reading switch=0');
+    // Every key of the typed word is a Russian letter, so there is no
+    // English reading ("`;" is "ёж", "'[" is "эх"). Switch when that reading
+    // is a listed word. "ё" is stored as "е", and that fold also turns "ёё"
+    // into "ее" and "жё" into "же", which are different words, so a reading
+    // that contains "ё" is accepted only for "ёж". "[]" and "<>" are not
+    // listed words.
+    if (SourceLayout = lkEN) and Other.Valid and
+       ((Other.Core = 'ёж') or ((Pos('ё', Other.Core) = 0) and Other.Listed)) then
+    begin
+      Result.NeedsSwitch := True;
+      Result.TargetLang := lkRU;
+      Result.ConvertedText := Converted;
+      Result.Mark := dmDictionary;
+      TraceHeuristic(Head + ' reason=letter_keys switch=1 target=RU converted=' +
+        QuoteTrace(Result.ConvertedText.ToLower));
+    end
+    else
+      TraceHeuristic(Head + ' reason=no_reading switch=0');
     Exit;
   end;
   // A word of the other layout needs a vowel; without one the converted text
