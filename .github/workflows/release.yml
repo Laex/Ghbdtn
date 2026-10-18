@@ -18,9 +18,10 @@ jobs:
         shell: cmd
         run: powershell -NoProfile -ExecutionPolicy Bypass -File build-release.ps1 %GITHUB_REF_NAME%
 
+      # Release clamps the journal to errors, so the verbose diagnostics test runs in Debug.
       - name: Test
         shell: cmd
-        run: tests\build-tests.bat Release Win64
+        run: tests\build-tests.bat Debug Win64
 
       - name: Pack
         shell: powershell
