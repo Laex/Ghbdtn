@@ -16,6 +16,8 @@ type
 
 const
   AllApplicationsLearning = '*';
+  SoundVolumeMax = 100;
+  SoundVolumeDefault = 40;
 
 type
   TApplicationProfile = record
@@ -80,6 +82,7 @@ type
     FLearningStamp: Integer;
     FSoundOnRussianInput: Boolean;
     FSoundOnSwitch: Boolean;
+    FSoundVolume: Integer;
     FDoubleLeftShiftEnabled: Boolean;
     FSwitchLayoutAfterSelection: Boolean;
     FAutoSwitchEnabled: Boolean;
@@ -96,6 +99,8 @@ type
     procedure SetSoundOnRussianInput(AValue: Boolean);
     function GetSoundOnSwitch: Boolean;
     procedure SetSoundOnSwitch(AValue: Boolean);
+    function GetSoundVolume: Integer;
+    procedure SetSoundVolume(AValue: Integer);
     function GetDoubleLeftShiftEnabled: Boolean;
     procedure SetDoubleLeftShiftEnabled(AValue: Boolean);
     function GetSwitchLayoutAfterSelection: Boolean;
@@ -188,6 +193,7 @@ type
     property ConfigFilePath: string read GetConfigFilePath;
     property SoundOnRussianInput: Boolean read GetSoundOnRussianInput write SetSoundOnRussianInput;
     property SoundOnSwitch: Boolean read GetSoundOnSwitch write SetSoundOnSwitch;
+    property SoundVolume: Integer read GetSoundVolume write SetSoundVolume;
     property DoubleLeftShiftEnabled: Boolean read GetDoubleLeftShiftEnabled write SetDoubleLeftShiftEnabled;
     property SwitchLayoutAfterSelection: Boolean read GetSwitchLayoutAfterSelection write SetSwitchLayoutAfterSelection;
     property AutoSwitchEnabled: Boolean read GetAutoSwitchEnabled write SetAutoSwitchEnabled;
@@ -384,6 +390,7 @@ procedure TSettings.SetDefaultsUnlocked;
 begin
   FSoundOnRussianInput := True;
   FSoundOnSwitch := True;
+  FSoundVolume := SoundVolumeDefault;
   FDoubleLeftShiftEnabled := True;
   FSwitchLayoutAfterSelection := False;
   FAutoSwitchEnabled := True;
@@ -444,6 +451,22 @@ procedure TSettings.SetSoundOnSwitch(AValue: Boolean);
 begin
   FLock.Acquire;
   try FSoundOnSwitch := AValue; finally FLock.Release; end;
+end;
+
+function TSettings.GetSoundVolume: Integer;
+begin
+  FLock.Acquire;
+  try Result := FSoundVolume; finally FLock.Release; end;
+end;
+
+procedure TSettings.SetSoundVolume(AValue: Integer);
+begin
+  FLock.Acquire;
+  try
+    FSoundVolume := Min(Max(AValue, 0), SoundVolumeMax);
+  finally
+    FLock.Release;
+  end;
 end;
 
 function TSettings.GetDoubleLeftShiftEnabled: Boolean;
@@ -846,6 +869,8 @@ begin
     SetDefaultsUnlocked;
     Root.TryGetValue<Boolean>('SoundOnRussianInput', FSoundOnRussianInput);
     Root.TryGetValue<Boolean>('SoundOnSwitch', FSoundOnSwitch);
+    Root.TryGetValue<Integer>('SoundVolume', FSoundVolume);
+    FSoundVolume := Min(Max(FSoundVolume, 0), SoundVolumeMax);
     Root.TryGetValue<Boolean>('DoubleLeftShiftEnabled', FDoubleLeftShiftEnabled);
     Root.TryGetValue<Boolean>('SwitchLayoutAfterSelection', FSwitchLayoutAfterSelection);
     Root.TryGetValue<Boolean>('AutoSwitchEnabled', FAutoSwitchEnabled);
@@ -1064,6 +1089,7 @@ begin
     Root.AddPair('SchemaVersion', TJSONNumber.Create(SettingsSchemaVersion));
     Root.AddPair('SoundOnRussianInput', TJSONBool.Create(FSoundOnRussianInput));
     Root.AddPair('SoundOnSwitch', TJSONBool.Create(FSoundOnSwitch));
+    Root.AddPair('SoundVolume', TJSONNumber.Create(FSoundVolume));
     Root.AddPair('DoubleLeftShiftEnabled',
       TJSONBool.Create(FDoubleLeftShiftEnabled));
     Root.AddPair('SwitchLayoutAfterSelection',

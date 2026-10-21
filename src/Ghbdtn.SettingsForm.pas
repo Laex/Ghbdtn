@@ -20,6 +20,7 @@ uses
   Vcl.Forms,
   Vcl.Controls,
   Vcl.StdCtrls,
+  Vcl.ComCtrls,
   Vcl.ExtCtrls,
   Vcl.Dialogs,
   Winapi.GDIPAPI,
@@ -29,7 +30,8 @@ uses
   Ghbdtn.Learning,
   Ghbdtn.Settings,
   Ghbdtn.AutoStart,
-  Ghbdtn.Hook;
+  Ghbdtn.Hook,
+  Ghbdtn.Sound;
 
 type
   TLearningRow = class
@@ -773,6 +775,8 @@ type
     FAutoSwitch: TSwitch;
     FSoundRU: TSwitch;
     FSoundSwitch: TSwitch;
+    FVolume: TTrackBar;
+    FVolumeLabel: TLabel;
     FDoubleShift: TSwitch;
     FSelectionLayout: TSwitch;
     FAutoStart: TSwitch;
@@ -797,8 +801,11 @@ type
       const ACaption: string): TSwitch;
     function AddCombo(AParent: TWinControl; var AY: Integer;
       const ACaption: string; const AItems: array of string): TComboBox;
+    function AddVolume(AParent: TWinControl; var AY: Integer): TTrackBar;
     function AddButton(AParent: TWinControl; const ACaption: string;
       ALeft, ATop: Integer; AOnClick: TNotifyEvent): TButton;
+    procedure VolumeChange(Sender: TObject);
+    procedure ShowVolume;
     procedure BuildMain(var AY: Integer);
     procedure BuildAdvanced(var AY: Integer);
     procedure FitHeight;
@@ -894,6 +901,41 @@ begin
   Inc(AY, S(RowHeight));
 end;
 
+function TfrmSettings.AddVolume(AParent: TWinControl;
+  var AY: Integer): TTrackBar;
+begin
+  Result := TTrackBar.Create(Self);
+  Result.Parent := AParent;
+  Result.Min := 0;
+  Result.Max := SoundVolumeMax;
+  Result.Frequency := 10;
+  Result.PageSize := 10;
+  Result.TickStyle := tsNone;
+  Result.SetBounds(AParent.ClientWidth - S(PageMargin) - S(ComboWidth),
+    AY + (S(RowHeight) - S(28)) div 2, S(ComboWidth), S(28));
+  Result.Anchors := [akTop, akRight];
+  FVolumeLabel := TLabel.Create(Self);
+  FVolumeLabel.Parent := AParent;
+  FVolumeLabel.AutoSize := False;
+  FVolumeLabel.Layout := tlCenter;
+  FVolumeLabel.SetBounds(S(PageMargin), AY,
+    Result.Left - S(PageMargin) - S(12), S(RowHeight));
+  FVolumeLabel.Anchors := [akLeft, akTop, akRight];
+  FVolumeLabel.FocusControl := Result;
+  Inc(AY, S(RowHeight));
+end;
+
+procedure TfrmSettings.ShowVolume;
+begin
+  FVolumeLabel.Caption := 'Громкость звуков: ' + IntToStr(FVolume.Position) + '%';
+end;
+
+procedure TfrmSettings.VolumeChange(Sender: TObject);
+begin
+  ShowVolume;
+  PlaySoundPreview(FVolume.Position);
+end;
+
 function TfrmSettings.AddButton(AParent: TWinControl; const ACaption: string;
   ALeft, ATop: Integer; AOnClick: TNotifyEvent): TButton;
 begin
@@ -937,6 +979,7 @@ begin
 
   AddSection(FMainPanel, AY, 'Звук и подсказки');
   FSoundSwitch := AddToggle(FMainPanel, AY, 'Звук при переключении');
+  FVolume := AddVolume(FMainPanel, AY);
   FHintMode := AddCombo(FMainPanel, AY, 'Подсказка у каретки',
     ['На время', 'Следует за кареткой', 'Не показывать']);
 end;
@@ -1072,6 +1115,7 @@ begin
   OkButton.Anchors := [akTop, akRight];
 
   LoadValues;
+  FVolume.OnChange := VolumeChange;
   FAdvancedShown := False;
   SpoilerClick(nil);
   SpoilerClick(nil);
@@ -1126,6 +1170,8 @@ begin
   SetOn(FAutoSwitch, AppSettings.AutoSwitchEnabled);
   SetOn(FSoundRU, AppSettings.SoundOnRussianInput);
   SetOn(FSoundSwitch, AppSettings.SoundOnSwitch);
+  FVolume.Position := AppSettings.SoundVolume;
+  ShowVolume;
   SetOn(FDoubleShift, AppSettings.DoubleLeftShiftEnabled);
   SetOn(FSelectionLayout, AppSettings.SwitchLayoutAfterSelection);
   SetOn(FAutoStart, AppSettings.AutoStart);
@@ -1149,6 +1195,7 @@ begin
   AppSettings.AutoSwitchEnabled := FAutoSwitch.Checked;
   AppSettings.SoundOnRussianInput := FSoundRU.Checked;
   AppSettings.SoundOnSwitch := FSoundSwitch.Checked;
+  AppSettings.SoundVolume := FVolume.Position;
   AppSettings.DoubleLeftShiftEnabled := FDoubleShift.Checked;
   AppSettings.SwitchLayoutAfterSelection := FSelectionLayout.Checked;
   AppSettings.AutoStart := FAutoStart.Checked;

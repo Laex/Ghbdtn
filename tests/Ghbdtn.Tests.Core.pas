@@ -1609,6 +1609,7 @@ begin
   try
     Source.SoundOnRussianInput := False;
     Source.SoundOnSwitch := False;
+    Source.SoundVolume := 75;
     Source.DoubleLeftShiftEnabled := False;
     Source.AutoSwitchEnabled := False;
     Source.AutoStart := True;
@@ -1620,6 +1621,12 @@ begin
 
     Assert.IsFalse(Loaded.SoundOnRussianInput);
     Assert.IsFalse(Loaded.SoundOnSwitch);
+    Assert.AreEqual(75, Loaded.SoundVolume);
+    Source.SoundVolume := 500;
+    Assert.AreEqual(SoundVolumeMax, Source.SoundVolume);
+    Source.SoundVolume := -3;
+    Assert.AreEqual(0, Source.SoundVolume);
+    Source.SoundVolume := 75;
     Assert.IsFalse(Loaded.DoubleLeftShiftEnabled);
     Assert.IsFalse(Loaded.SwitchLayoutAfterSelection);
     Assert.IsFalse(Loaded.AutoSwitchEnabled);

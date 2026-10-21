@@ -7,6 +7,9 @@ uses
 
 procedure InitializeSound;
 procedure PlaySwitchBeep(ATarget: TLangKind);
+{ Plays the switch tone at the given volume (0..SoundVolumeMax) so a volume
+  control can be heard before it is saved. }
+procedure PlaySoundPreview(AVolume: Integer);
 procedure PlayKeyClickRU;
 procedure ShutdownSound;
 
@@ -19,7 +22,8 @@ uses
   System.Classes,
   System.Math,
   System.SyncObjs,
-  Ghbdtn.Diagnostics;
+  Ghbdtn.Diagnostics,
+  Ghbdtn.Settings;
 
 type
   TSoundWorker = class(TThread)
@@ -28,14 +32,16 @@ type
     FSignal: TEvent;
     FSwitchLang: TLangKind;
     FClickPending: Boolean;
+    FSwitchVolume: Integer;
+    FClickVolume: Integer;
     FShuttingDown: Boolean;
   protected
     procedure Execute; override;
   public
     constructor Create;
     destructor Destroy; override;
-    procedure QueueSwitch(ATarget: TLangKind);
-    procedure QueueClick;
+    procedure QueueSwitch(ATarget: TLangKind; AVolume: Integer);
+    procedure QueueClick(AVolume: Integer);
     procedure Shutdown;
   end;
 
@@ -58,7 +64,7 @@ begin
   inherited Destroy;
 end;
 
-procedure TSoundWorker.QueueSwitch(ATarget: TLangKind);
+procedure TSoundWorker.QueueSwitch(ATarget: TLangKind; AVolume: Integer);
 begin
   if ATarget = lkUnknown then
     Exit;
@@ -67,6 +73,7 @@ begin
     if not FShuttingDown then
     begin
       FSwitchLang := ATarget;
+      FSwitchVolume := AVolume;
       FSignal.SetEvent;
     end;
   finally
@@ -74,13 +81,14 @@ begin
   end;
 end;
 
-procedure TSoundWorker.QueueClick;
+procedure TSoundWorker.QueueClick(AVolume: Integer);
 begin
   FLock.Acquire;
   try
     if not FShuttingDown then
     begin
       FClickPending := True;
+      FClickVolume := AVolume;
       FSignal.SetEvent;
     end;
   finally
@@ -88,7 +96,13 @@ begin
   end;
 end;
 
-procedure AppendSegment(var ASamples: TBytes; AFrequency, ADurationMs: Integer);
+const
+  // Full volume peaks at about 69% of the 16-bit range, which leaves room for
+  // the fade shaping without clipping.
+  AmplitudePerVolumeStep = 225;
+
+procedure AppendSegment(var ASamples: TBytes; AFrequency, ADurationMs,
+  AVolume: Integer);
 const
   SampleRate = 44100;
 var
@@ -111,7 +125,7 @@ begin
       Amplitude := 0
     else
     begin
-      Amplitude := 9000;
+      Amplitude := AmplitudePerVolumeStep * AVolume;
       if I < Fade then
         Amplitude := Amplitude * I / Fade
       else if I > SampleCount - Fade then
@@ -253,17 +267,17 @@ begin
   StartIdleLoop;
 end;
 
-procedure PlayTone(AFrequency, ADurationMs: Integer);
+procedure PlayTone(AFrequency, ADurationMs, AVolume: Integer);
 var
   Samples: TBytes;
 begin
-  if (AFrequency <= 0) or (ADurationMs <= 0) then
+  if (AFrequency <= 0) or (ADurationMs <= 0) or (AVolume <= 0) then
     Exit;
-  AppendSegment(Samples, AFrequency, ADurationMs);
+  AppendSegment(Samples, AFrequency, ADurationMs, AVolume);
   PlaySamples(Samples, ADurationMs);
 end;
 
-procedure PlaySwitchTones(AToRussian: Boolean);
+procedure PlaySwitchTones(AToRussian: Boolean; AVolume: Integer);
 const
   LowHz = 784;
   HighHz = 1175;
@@ -284,9 +298,11 @@ begin
     FirstHz := HighHz;
     SecondHz := LowHz;
   end;
-  AppendSegment(Samples, FirstHz, ToneMs);
-  AppendSegment(Samples, 0, GapMs);
-  AppendSegment(Samples, SecondHz, ToneMs);
+  if AVolume <= 0 then
+    Exit;
+  AppendSegment(Samples, FirstHz, ToneMs, AVolume);
+  AppendSegment(Samples, 0, GapMs, AVolume);
+  AppendSegment(Samples, SecondHz, ToneMs, AVolume);
   PlaySamples(Samples, ToneMs + GapMs + ToneMs);
 end;
 
@@ -294,6 +310,7 @@ procedure TSoundWorker.Execute;
 var
   SwitchLang: TLangKind;
   DoClick: Boolean;
+  SwitchVolume, ClickVolume: Integer;
 begin
   while not Terminated do
   begin
@@ -302,15 +319,17 @@ begin
     try
       SwitchLang := FSwitchLang;
       DoClick := FClickPending;
+      SwitchVolume := FSwitchVolume;
+      ClickVolume := FClickVolume;
       FSwitchLang := lkUnknown;
       FClickPending := False;
     finally
       FLock.Release;
     end;
     if SwitchLang <> lkUnknown then
-      PlaySwitchTones(SwitchLang = lkRU)
+      PlaySwitchTones(SwitchLang = lkRU, SwitchVolume)
     else if DoClick then
-      PlayTone(1800, 12);
+      PlayTone(1800, 12, ClickVolume);
     if (GDevice <> 0) and
        (GetTickCount64 - GLastPlayTick > DeviceIdleCloseMs) then
       CloseDevice;
@@ -342,13 +361,19 @@ end;
 procedure PlaySwitchBeep(ATarget: TLangKind);
 begin
   if SoundWorker <> nil then
-    SoundWorker.QueueSwitch(ATarget);
+    SoundWorker.QueueSwitch(ATarget, AppSettings.SoundVolume);
+end;
+
+procedure PlaySoundPreview(AVolume: Integer);
+begin
+  if SoundWorker <> nil then
+    SoundWorker.QueueSwitch(lkRU, Min(Max(AVolume, 0), SoundVolumeMax));
 end;
 
 procedure PlayKeyClickRU;
 begin
   if SoundWorker <> nil then
-    SoundWorker.QueueClick;
+    SoundWorker.QueueClick(AppSettings.SoundVolume);
 end;
 
 procedure ShutdownSound;
