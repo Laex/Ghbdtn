@@ -140,6 +140,7 @@ type
     procedure LineAppend(AChar: Char);
     function TryLastWordBeforeSpaces(var AItem: TInputWorkItem;
       out AWord: string): Boolean;
+    function TryTrailingSymbolRun(var AItem: TInputWorkItem): Boolean;
     procedure LineReplaceTail(AOldLength: Integer; const ANewText: string);
     procedure NoteLineDelimiter(AVKCode: DWORD; APunctuation: Char);
     procedure TrackCtrlTap(AIsKeyDown, AIsKeyUp: Boolean);
@@ -1081,6 +1082,33 @@ begin
   Result := True;
 end;
 
+{ A run of signs such as "///" typed last is swapped to the other layout
+  ("..."); it is taken from the typed line and checked against the editor like
+  a word. }
+function TKbdHookManager.TryTrailingSymbolRun(var AItem: TInputWorkItem): Boolean;
+var
+  RunStart: Integer;
+  Original, Converted: string;
+begin
+  RunStart := Length(FLineText) + 1;
+  while (RunStart > 1) and IsCaretSymbolChar(FLineText[RunStart - 1]) do
+    Dec(RunStart);
+  if RunStart > Length(FLineText) then
+    Exit(False);
+  Original := Copy(FLineText, RunStart, MaxInt);
+  Converted := ConvertStringSwap(Original);
+  if Converted = Original then
+    Exit(False);
+  AItem.Kind := iwReplaceBeforeCaret;
+  AItem.OldWordLength := CaretStepCount(Original);
+  AItem.ExpectedText := Original;
+  AItem.NewText := Converted;
+  AItem.SwitchLayoutAfter := True;
+  LineReplaceTail(Length(Original), Converted);
+  ClearLastConversion;
+  Result := True;
+end;
+
 procedure TKbdHookManager.HandleDoubleLeftShift;
 var
   Item: TInputWorkItem;
@@ -1167,6 +1195,10 @@ begin
   begin
     // The caret stands after the space that ended the word, so the word is
     // no longer in the input buffer; it is taken from the typed line.
+  end
+  else if TryTrailingSymbolRun(Item) then
+  begin
+    // The signs just typed are swapped in place.
   end
   else
   begin
@@ -1572,11 +1604,13 @@ function KeyedWordSeparator(AVirtualKey: DWORD; AShifted: Boolean;
 var
   Ch: Char;
 begin
-  // Numpad plus and minus are the same separators as the main keys.
+  // Numpad plus, minus and divide are the same separators as the main keys.
   if AVirtualKey = VK_ADD then
     Exit('+');
   if AVirtualKey = VK_SUBTRACT then
     Exit('-');
+  if AVirtualKey = VK_DIVIDE then
+    Exit('/');
 
   Result := #0;
   if IsPunctuationKey(AVirtualKey) then
@@ -2152,7 +2186,8 @@ begin
      ((AInput.VirtualKey >= VK_OEM_1) and
       (AInput.VirtualKey <= VK_OEM_7)) or
      (AInput.VirtualKey = VK_ADD) or
-     (AInput.VirtualKey = VK_SUBTRACT) then
+     (AInput.VirtualKey = VK_SUBTRACT) or
+     (AInput.VirtualKey = VK_DIVIDE) then
   begin
     CurrentLang := FEarlyLang;
     if CurrentLang = lkUnknown then

@@ -54,6 +54,7 @@ function TryPrecedingShortWord(const ALine: string; AWordLength: Integer;
 { Three or more of the key that types "ё" on the Russian layout: a code fence
   typed on the wrong layout. No Russian word looks like that. }
 function IsCodeFenceKeys(const AText: string): Boolean;
+function IsCaretSymbolChar(C: Char): Boolean;
 function IsEnglishQuestionMarker(const AText: string): Boolean;
 function AnalyzeSelection(const AText: string; AMode: THeuristicMode;
   const ANeverSwitch: TNeverSwitchCallback): TAnalysisResult;
@@ -759,6 +760,24 @@ begin
   Result := ConvertSelectionSmart(AText, AMode, ANeverSwitch, nil);
 end;
 
+{ Keys that are punctuation on one layout and another sign on the other, but
+  not a letter on either: "///" typed on the English layout is "..." on the
+  Russian one. }
+function IsCaretSymbolChar(C: Char): Boolean;
+begin
+  Result := CharInSet(C, ['/', '?', '@', '#', '$', '^', '&']) or (C = '№');
+end;
+
+function IsSymbolRun(const AText: string): Boolean;
+var
+  I: Integer;
+begin
+  Result := AText <> '';
+  for I := 1 to Length(AText) do
+    if not IsCaretSymbolChar(AText[I]) then
+      Exit(False);
+end;
+
 function ConvertTokens(const AText: string; AMode: THeuristicMode;
   const ANeverSwitch: TNeverSwitchCallback;
   const APreferSwitch: TPreferSwitchCallback; AManual: Boolean): string;
@@ -787,6 +806,11 @@ begin
     Token := Copy(AText, StartIdx, I - StartIdx);
     if Token = '' then
       Continue;
+    if AManual and IsSymbolRun(Token) then
+    begin
+      Result := Result + ConvertStringSwap(Token);
+      Continue;
+    end;
     Lang := TypedLayout(Token, lkUnknown);
     Analysis := AnalyzeWordCore(Token, Lang, AMode, ANeverSwitch,
       APreferSwitch, UntrackedPhrase, AManual);
@@ -867,6 +891,7 @@ begin
   Result := IsPlainLetter(C) or IsRussianLetterKey(C);
 end;
 
+
 function TryWordAtCaret(const AText: string; ACaret: Integer;
   out AStart, AEnd: Integer): Boolean;
 var
@@ -901,7 +926,22 @@ begin
   else if (ACaret > 0) and IsCaretWordChar(AText[ACaret]) then
     Seed := ACaret
   else
-    Exit;
+  begin
+    // No letters here: a run of such signs is taken whole.
+    if (ACaret < Length(AText)) and IsCaretSymbolChar(AText[ACaret + 1]) then
+      Seed := ACaret + 1
+    else if (ACaret > 0) and IsCaretSymbolChar(AText[ACaret]) then
+      Seed := ACaret
+    else
+      Exit;
+    AStart := Seed;
+    AEnd := Seed;
+    while (AStart > 0) and IsCaretSymbolChar(AText[AStart]) do
+      Dec(AStart);
+    while (AEnd < Length(AText)) and IsCaretSymbolChar(AText[AEnd + 1]) do
+      Inc(AEnd);
+    Exit(True);
+  end;
 
   BlobStart := Seed;
   BlobEnd := Seed;

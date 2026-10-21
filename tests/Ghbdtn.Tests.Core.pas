@@ -167,6 +167,10 @@ type
     [Test]
     procedure WordAtCaretReadsTheWordUnderTheCaret;
     [Test]
+    procedure WordAtCaretTakesARunOfSymbolKeys;
+    [Test]
+    procedure ManualConversionSwapsStandaloneSymbolRuns;
+    [Test]
     procedure InvertsEachLetterCase;
     [Test]
     procedure AppliesCaseModes;
@@ -1323,6 +1327,26 @@ begin
 
   Assert.IsFalse(TryWordAtCaret('', 0, Start, Finish));
   Assert.IsFalse(TryWordAtCaret('hello world', -1, Start, Finish));
+end;
+
+procedure TAnalyzerTests.WordAtCaretTakesARunOfSymbolKeys;
+var
+  Start, Finish: Integer;
+begin
+  Assert.IsTrue(TryWordAtCaret('///', 3, Start, Finish));
+  Assert.AreEqual(0, Start);
+  Assert.AreEqual(3, Finish);
+  Assert.IsTrue(TryWordAtCaret('a ??? b', 4, Start, Finish));
+  Assert.AreEqual(2, Start);
+  Assert.AreEqual(5, Finish);
+  Assert.IsFalse(TryWordAtCaret('a  b', 2, Start, Finish));
+end;
+
+procedure TAnalyzerTests.ManualConversionSwapsStandaloneSymbolRuns;
+begin
+  Assert.AreEqual('...', ConvertManualSelection('///', hmBalanced, nil, nil));
+  Assert.AreEqual('x ... y',
+    ConvertManualSelection('x /// y', hmBalanced, nil, nil));
 end;
 
 procedure TAnalyzerTests.AppliesCaseModes;
