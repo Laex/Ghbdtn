@@ -31,7 +31,10 @@ jobs:
           $zip = Join-Path dist $name
           if (Test-Path -LiteralPath $zip) { Remove-Item -LiteralPath $zip }
           Compress-Archive -Path bin\Ghbdtn.exe -DestinationPath $zip
-          $hash = (Get-FileHash -Algorithm SHA256 -LiteralPath $zip).Hash.ToLower()
+          # SHA-256 through .NET, so no PowerShell module has to be loaded.
+          $stream = [IO.File]::OpenRead((Resolve-Path -LiteralPath $zip).Path)
+          try { $bytes = [Security.Cryptography.SHA256]::Create().ComputeHash($stream) } finally { $stream.Dispose() }
+          $hash = -join ($bytes | ForEach-Object { $_.ToString('x2') })
           Set-Content -LiteralPath ($zip + '.sha256') -Value ($hash + ' *' + $name) -Encoding ascii
 
       - name: Publish
