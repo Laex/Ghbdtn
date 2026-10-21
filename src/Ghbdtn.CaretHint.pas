@@ -208,17 +208,39 @@ begin
   end;
 end;
 
+var
+  AutomationCaretTick: UInt64;
+  AutomationCaretPoint: TPoint;
+  AutomationCaretFound: Boolean;
+
+{ The UI Automation query is a cross-process call made on the main thread, so
+  the follow timer reuses a recent answer instead of repeating it every tick. }
+function TryGetCachedAutomationCaret(out APoint: TPoint): Boolean;
+const
+  AutomationCaretCacheMs = 300;
+var
+  Tick: UInt64;
+begin
+  Tick := GetTickCount64;
+  if (AutomationCaretTick = 0) or
+     (Tick - AutomationCaretTick > AutomationCaretCacheMs) then
+  begin
+    try
+      AutomationCaretFound := TryGetAutomationCaret(AutomationCaretPoint);
+    except
+      AutomationCaretFound := False;
+    end;
+    AutomationCaretTick := Tick;
+  end;
+  APoint := AutomationCaretPoint;
+  Result := AutomationCaretFound;
+end;
+
 function TryGetCaretScreenPoint(out APoint: TPoint): Boolean;
 begin
   Result := TryGetWin32Caret(APoint);
   if not Result then
-  begin
-    try
-      Result := TryGetAutomationCaret(APoint);
-    except
-      Result := False;
-    end;
-  end;
+    Result := TryGetCachedAutomationCaret(APoint);
   if not Result then
     Result := GetCursorPos(APoint);
 end;
