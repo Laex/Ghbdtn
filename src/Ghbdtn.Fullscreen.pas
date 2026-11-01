@@ -19,7 +19,7 @@ function IsForegroundFullscreen: Boolean;
 implementation
 
 uses
-  Winapi.Windows;
+  Winapi.Windows, Winapi.MultiMon;
 
 function SHQueryUserNotificationState(out AState: Integer): HRESULT; stdcall;
   external 'shell32.dll' name 'SHQueryUserNotificationState';
@@ -30,13 +30,34 @@ begin
     QUNS_PRESENTATION_MODE];
 end;
 
+{ The shell state is session-wide: a full-screen application on one monitor
+  reports it while the user works in a window on another monitor. The
+  foreground window itself must also cover its whole monitor. }
+function ForegroundCoversMonitor: Boolean;
+var
+  Wnd: HWND;
+  Mon: HMONITOR;
+  Info: TMonitorInfo;
+  R: TRect;
+begin
+  Wnd := GetForegroundWindow;
+  if Wnd = 0 then
+    Exit(False);
+  Mon := MonitorFromWindow(Wnd, MONITOR_DEFAULTTONEAREST);
+  Info.cbSize := SizeOf(Info);
+  if (Mon = 0) or not GetMonitorInfo(Mon, @Info) or not GetWindowRect(Wnd, R) then
+    Exit(False);
+  Result := (R.Left <= Info.rcMonitor.Left) and (R.Top <= Info.rcMonitor.Top) and
+    (R.Right >= Info.rcMonitor.Right) and (R.Bottom >= Info.rcMonitor.Bottom);
+end;
+
 function IsForegroundFullscreen: Boolean;
 var
   State: Integer;
 begin
   State := QUNS_ACCEPTS_NOTIFICATIONS;
   Result := Succeeded(SHQueryUserNotificationState(State)) and
-    IsFullscreenNotificationState(State);
+    IsFullscreenNotificationState(State) and ForegroundCoversMonitor;
 end;
 
 end.
