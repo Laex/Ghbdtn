@@ -71,6 +71,17 @@ begin
     LogDiagnostic(dlInfo, deStaleWorkDropped);
 end;
 
+{ The error-level entry names the program whose window kept its layout, so a
+  Release log shows where the switch request is not applied. }
+procedure SwitchTargetLayout(ALang: TLangKind; APlaySound: Boolean);
+begin
+  if not SwitchForegroundLayoutConfirmed(ALang, LayoutSwitchWaitMs) then
+    LogDiagnostic(dlError, deLayoutSwitchFailed, 0, 'process=' +
+      LowerCase(ExtractFileName(ProcessImagePathOfWindow(GetForegroundWindow))));
+  if APlaySound then
+    PlaySwitchBeep(ALang);
+end;
+
 procedure TInputWorker.ExecuteWordReplacement(const AItem: TInputWorkItem);
 begin
   if not IsItemCurrent(AItem) then
@@ -90,10 +101,7 @@ begin
     SendMarkedKeyPress(VK_CAPITAL);
   if AItem.KeepLayout then
     Exit;
-  SwitchForegroundKeyboardLayout(AItem.TargetLang);
-  WaitForForegroundLang(AItem.TargetLang, LayoutSwitchWaitMs);
-  if AItem.PlaySwitchSound then
-    PlaySwitchBeep(AItem.TargetLang);
+  SwitchTargetLayout(AItem.TargetLang, AItem.PlaySwitchSound);
 end;
 
 function LayoutForConvertedText(const AText: string): TLangKind;
@@ -581,12 +589,7 @@ begin
     begin
       TargetLang := LayoutForConvertedText(ConvertedText);
       if (TargetLang <> lkUnknown) and IsTargetWindowValid(AItem.TargetWindow) then
-      begin
-        SwitchForegroundKeyboardLayout(TargetLang);
-        WaitForForegroundLang(TargetLang, LayoutSwitchWaitMs);
-        if AItem.PlaySwitchSound then
-          PlaySwitchBeep(TargetLang);
-      end;
+        SwitchTargetLayout(TargetLang, AItem.PlaySwitchSound);
     end;
   finally
     if ClipboardTouched then
@@ -668,12 +671,7 @@ begin
     begin
       TargetLang := LayoutForConvertedText(AItem.NewText);
       if (TargetLang <> lkUnknown) and IsTargetWindowValid(AItem.TargetWindow) then
-      begin
-        SwitchForegroundKeyboardLayout(TargetLang);
-        WaitForForegroundLang(TargetLang, LayoutSwitchWaitMs);
-        if AItem.PlaySwitchSound then
-          PlaySwitchBeep(TargetLang);
-      end;
+        SwitchTargetLayout(TargetLang, AItem.PlaySwitchSound);
     end;
   finally
     if ClipboardTouched then
@@ -703,12 +701,7 @@ begin
       ExecuteReplaceBeforeCaret(AItem);
     iwSwitchLayout:
       if IsTargetWindowValid(AItem.TargetWindow) then
-      begin
-        SwitchForegroundKeyboardLayout(AItem.TargetLang);
-        WaitForForegroundLang(AItem.TargetLang, LayoutSwitchWaitMs);
-        if AItem.PlaySwitchSound then
-          PlaySwitchBeep(AItem.TargetLang);
-      end;
+        SwitchTargetLayout(AItem.TargetLang, AItem.PlaySwitchSound);
     iwPersistSettings:
       begin
         if AItem.LearningWord = '' then

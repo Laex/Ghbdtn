@@ -153,6 +153,8 @@ type
     procedure ClearEarlySwitch;
     function TryShortWordBefore(AWordLength: Integer; out AExtraOld: Integer;
       out APrefix: string): Boolean;
+    function TryJoinShortWordBefore(const AWord: string; VKCode: DWORD;
+      APunctuation: Char): Boolean;
     function CurrentApplicationEnabled: Boolean;
     function IsFullscreenPaused: Boolean;
     procedure QueueTextCommand(AMode: TCaseMode;
@@ -199,6 +201,10 @@ type
 
 var
   HookManager: TKbdHookManager = nil;
+
+{ The full path of the executable that owns AWindow, or '' when the process
+  cannot be opened. }
+function ProcessImagePathOfWindow(AWindow: HWND): string;
 
 implementation
 
@@ -353,6 +359,11 @@ begin
 end;
 
 function TKbdHookManager.GetProcessNameForWindow(AWindow: HWND): string;
+begin
+  Result := ProcessImagePathOfWindow(AWindow);
+end;
+
+function ProcessImagePathOfWindow(AWindow: HWND): string;
 var
   ProcessId: DWORD;
   ProcessHandle: THandle;
@@ -1649,6 +1660,7 @@ var
   MarkerText, ShortPrefix: string;
   TrailingMark: Char;
   ShortExtra: Integer;
+  Joined: Boolean;
 begin
   Result := False;
   ShortExtra := 0;
@@ -1782,6 +1794,8 @@ begin
     else
     begin
       SettlePendingPhrase(True);
+      Joined := (ALang = lkRU) and not FEarlyActive and
+        TryJoinShortWordBefore(MarkerText, VKCode, APunctuation);
       RememberCommittedWord(ALang, MarkerText);
       if FEarlyActive then
       begin
@@ -1795,7 +1809,9 @@ begin
       end;
       if (APunctuation = '?') and IsEnglishQuestionMarker(MarkerText + '?') then
         FAwaitQuestionSpace := True;
-      if ((ALang <> lkEN) or not CharInSet(APunctuation, ['?', '/'])) and
+      if Joined then
+        Result := True
+      else if ((ALang <> lkEN) or not CharInSet(APunctuation, ['?', '/'])) and
          TryQueueCaseFix(MarkerText, APunctuation, VKCode, QuestionArmed) then
         Result := True;
     end;
@@ -1832,6 +1848,39 @@ begin
     Exit;
   AExtraOld := Length(Short) + 1;
   APrefix := ConvertStringSwap(Short) + ' ';
+end;
+
+{ "b" typed on the English layout, then the layout switched by hand and
+  "слово" typed on the Russian one: the short word belongs to the Russian
+  word after it and is switched while the layout stays. }
+function TKbdHookManager.TryJoinShortWordBefore(const AWord: string;
+  VKCode: DWORD; APunctuation: Char): Boolean;
+var
+  Item: TInputWorkItem;
+  ShortExtra: Integer;
+  ShortPrefix: string;
+begin
+  Result := False;
+  if not ContainsPhraseLetter(AWord) or
+     not ShortWordStartsRussianPhrase(FPhrase) or
+     not TryShortWordBefore(Length(AWord), ShortExtra, ShortPrefix) then
+    Exit;
+  FillChar(Item, SizeOf(Item), 0);
+  Item.Kind := iwReplaceWord;
+  Item.TargetWindow := GetForegroundWindow;
+  Item.OldWordLength := Length(AWord) + ShortExtra;
+  Item.NewText := ShortPrefix + AWord;
+  Item.KeepLayout := True;
+  if APunctuation <> #0 then
+  begin
+    Item.NewText := Item.NewText + APunctuation;
+    FConsumedDelimiterVK := Word(VKCode);
+  end
+  else
+    Item.TrailingKey := Word(VKCode);
+  LineReplaceTail(Length(AWord) + ShortExtra, ShortPrefix + AWord);
+  EnqueueWork(Item);
+  Result := True;
 end;
 
 procedure TKbdHookManager.ClearEarlySwitch;

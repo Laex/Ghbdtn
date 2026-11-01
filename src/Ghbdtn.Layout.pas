@@ -25,6 +25,15 @@ procedure SwitchForegroundKeyboardLayout(ATargetLang: TLangKind = lkUnknown);
   request is asynchronous: a key typed before the window applies it is typed
   on the old layout. }
 function WaitForForegroundLang(ALang: TLangKind; ATimeoutMs: Cardinal): Boolean;
+{ Calls ARequest until AConfirmed reports the change, at most AAttempts
+  times. A window busy with input may drop a switch request, and a request
+  for an explicit layout is harmless to repeat. }
+function RequestUntilConfirmed(const ARequest: TProc;
+  const AConfirmed: TFunc<Boolean>; AAttempts: Integer): Boolean;
+{ Switches the foreground window to ALang and waits for it to apply the
+  switch. False when the window still reports another layout. }
+function SwitchForegroundLayoutConfirmed(ALang: TLangKind;
+  ATimeoutMs: Cardinal): Boolean;
 
 function ConvertCharSwap(AChar: Char): Char;
 function ConvertStringSwap(const AText: string): string;
@@ -178,6 +187,36 @@ begin
     Sleep(4);
   until GetTickCount64 >= Deadline;
   Result := False;
+end;
+
+function RequestUntilConfirmed(const ARequest: TProc;
+  const AConfirmed: TFunc<Boolean>; AAttempts: Integer): Boolean;
+var
+  Attempt: Integer;
+begin
+  for Attempt := 1 to AAttempts do
+  begin
+    ARequest();
+    if AConfirmed() then
+      Exit(True);
+  end;
+  Result := False;
+end;
+
+function SwitchForegroundLayoutConfirmed(ALang: TLangKind;
+  ATimeoutMs: Cardinal): Boolean;
+const
+  SwitchAttempts = 2;
+begin
+  Result := RequestUntilConfirmed(
+    procedure
+    begin
+      SwitchForegroundKeyboardLayout(ALang);
+    end,
+    function: Boolean
+    begin
+      Result := WaitForForegroundLang(ALang, ATimeoutMs);
+    end, SwitchAttempts);
 end;
 
 function ConvertCharSwap(AChar: Char): Char;

@@ -51,6 +51,11 @@ function AnalyzeWordPrefix(const APrefix: string; ACurrentLang: TLangKind;
   left alone by itself, but it belongs to the words after it. }
 function TryPrecedingShortWord(const ALine: string; AWordLength: Integer;
   out AWord: string): Boolean;
+{ APhrase holds the words before the one just typed on the Russian layout and
+  ends with a short word left on the English layout. That word is Russian
+  when it starts the phrase or follows Russian words ("b" is "и"); after an
+  English word it is English ("plan b"). }
+function ShortWordStartsRussianPhrase(const APhrase: TPhraseContext): Boolean;
 { Three or more of the key that types "ё" on the Russian layout: a code fence
   typed on the wrong layout. No Russian word looks like that. }
 function IsCodeFenceKeys(const AText: string): Boolean;
@@ -342,6 +347,78 @@ begin
     UntrackedPhrase);
 end;
 
+function IsCyrillicLetter(C: Char): Boolean;
+begin
+  Result := ((C >= 'А') and (C <= 'я')) or (C = 'Ё') or (C = 'ё');
+end;
+
+function IsLatinLetter(C: Char): Boolean;
+begin
+  Result := CharInSet(C, ['a'..'z', 'A'..'Z']);
+end;
+
+{ "отрtlfrnbhjdfyj": the layout changed inside the word, so its tail came out
+  in the other script. The tail is switched to the script the word started
+  in when the whole word then reads as a word of that language; otherwise the
+  mixed word stays protected. A Russian tail needs a Latin letter: "слово,"
+  ends in a mark, not in the key of "б". }
+function TryMixedLayoutWord(const AWord: string; out AFixed: string;
+  out ALang: TLangKind): Boolean;
+var
+  Split, I, Plausible: Integer;
+  HasLatin: Boolean;
+  Reading: TReading;
+begin
+  Result := False;
+  AFixed := '';
+  ALang := lkUnknown;
+  if Length(AWord) < 4 then
+    Exit;
+  Split := 1;
+  if IsCyrillicLetter(AWord[1]) then
+  begin
+    while (Split <= Length(AWord)) and IsCyrillicLetter(AWord[Split]) do
+      Inc(Split);
+    HasLatin := False;
+    for I := Split to Length(AWord) do
+      if IsLatinLetter(AWord[I]) then
+        HasLatin := True
+      else if not IsRussianLetterKey(AWord[I]) then
+        Exit;
+    if not HasLatin then
+      Exit;
+    ALang := lkRU;
+  end
+  else if IsLatinLetter(AWord[1]) then
+  begin
+    while (Split <= Length(AWord)) and IsLatinLetter(AWord[Split]) do
+      Inc(Split);
+    for I := Split to Length(AWord) do
+      if not IsCyrillicLetter(AWord[I]) then
+        Exit;
+    ALang := lkEN;
+  end
+  else
+    Exit;
+  // At least two letters of the first script and one of the other.
+  if (Split < 3) or (Split > Length(AWord)) then
+    Exit;
+  AFixed := Copy(AWord, 1, Split - 1) + ConvertStringSwap(Copy(AWord, Split, MaxInt));
+  if ALang = lkRU then
+  begin
+    Reading := ReadAsRussian(AFixed.ToLower);
+    Plausible := PlausibleRussianLetterCost;
+  end
+  else
+  begin
+    Reading := ReadAsEnglish(AFixed.ToLower);
+    Plausible := PlausibleEnglishLetterCost;
+  end;
+  Result := Reading.Valid and (Reading.Listed or
+    (HasVowel(AFixed.ToLower, ALang) and
+     (Reading.PlainCost <= Plausible * (Length(AFixed) + 1))));
+end;
+
 function AnalyzeWordCore(const AWord: string; ACurrentLang: TLangKind;
   AMode: THeuristicMode; const ANeverSwitch: TNeverSwitchCallback;
   const APreferSwitch: TPreferSwitchCallback;
@@ -363,6 +440,9 @@ var
   Plausible: Integer;
   KeptStart, KeptStop, Offset: Integer;
   ShortWord: string;
+  TermText: string;
+  MixedText: string;
+  MixedLang: TLangKind;
   Head: string;
 begin
   Result.NeedsSwitch := False;
@@ -382,6 +462,15 @@ begin
   begin
     Result.Mark := dmLearning;
     TraceHeuristic(Head + ' reason=never_switch switch=0');
+    Exit;
+  end;
+  if TryMixedLayoutWord(AWord, MixedText, MixedLang) then
+  begin
+    Result.NeedsSwitch := True;
+    Result.TargetLang := MixedLang;
+    Result.ConvertedText := MixedText;
+    TraceHeuristic(Head + ' reason=mixed_layout switch=1 target=' +
+      LayoutToken(MixedLang) + ' converted=' + QuoteTrace(MixedText.ToLower));
     Exit;
   end;
   if (ACurrentLang <> lkEN) and IsCodeFenceKeys(AWord) then
@@ -458,6 +547,32 @@ begin
     Result.ConvertedText := ConvertStringSwap(AWord);
     TraceHeuristic(Head + ' reason=file_extension switch=1 target=EN converted=' +
       QuoteTrace(Result.ConvertedText.ToLower));
+    Exit;
+  end;
+  // "вум" is "dev" typed on the Russian layout, and "ctrl" typed as it is
+  // stays put. A term whose Russian reading is a listed word ("exe" is
+  // "учу") is left to the score.
+  if SourceLayout = lkRU then
+    TermText := ConvertStringSwap(ReadText).ToLower
+  else
+    TermText := ReadText;
+  if IsTechnicalTerm(TermText) and
+     not ReadAsRussian(ConvertStringSwap(TermText)).Listed then
+  begin
+    if SourceLayout = lkRU then
+    begin
+      Result.Mark := dmDictionary;
+      Result.NeedsSwitch := True;
+      Result.TargetLang := lkEN;
+      Result.ConvertedText := ConvertStringSwap(AWord);
+      TraceHeuristic(Head + ' reason=technical_term switch=1 target=EN converted=' +
+        QuoteTrace(Result.ConvertedText.ToLower));
+    end
+    else
+    begin
+      Result.Mark := dmLeave;
+      TraceHeuristic(Head + ' reason=technical_term switch=0');
+    end;
     Exit;
   end;
 
@@ -628,6 +743,12 @@ begin
     AWord := '';
 end;
 
+function ShortWordStartsRussianPhrase(const APhrase: TPhraseContext): Boolean;
+begin
+  Result := PhraseEndsWith(APhrase, lkEN) and
+    ((APhrase.Count = 1) or (APhrase.Languages[APhrase.Count - 2] = lkRU));
+end;
+
 function AnalyzeWordPrefix(const APrefix: string; ACurrentLang: TLangKind;
   AMinLetters: Integer; AMode: THeuristicMode;
   const ANeverSwitch: TNeverSwitchCallback): TAnalysisResult;
@@ -652,6 +773,9 @@ begin
     OtherLayout := lkEN;
   Lower := APrefix.ToLower;
   if Assigned(ANeverSwitch) and ANeverSwitch(Lower) then
+    Exit;
+  // "ctr" may still become "ctrl"; the whole word decides.
+  if (ACurrentLang = lkEN) and HasTechnicalTermWithPrefix(Lower) then
     Exit;
   OtherText := ConvertStringSwap(Lower);
   if not IsPlainLayoutLetters(OtherText, OtherLayout) or

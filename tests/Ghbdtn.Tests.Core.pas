@@ -49,6 +49,10 @@ type
     procedure MapsMinusAndPlusOnBothLayouts;
     [Test]
     procedure MarksTheKeysThatTypeRussianLetters;
+    [Test]
+    procedure RepeatsSwitchRequestUntilConfirmed;
+    [Test]
+    procedure GivesUpSwitchAfterTheLastRequest;
   end;
 
   [TestFixture]
@@ -86,6 +90,12 @@ type
     procedure KeepsEnglishWordsTypedInEnglish;
     [Test]
     procedure DetectsRussianWordsWithLettersOnPunctuationKeys;
+    [Test]
+    procedure DetectsWorkWordsTypedInEnglish;
+    [Test]
+    procedure DetectsTechnicalTermsTypedInRussian;
+    [Test]
+    procedure KeepsTechnicalTermsTypedInEnglish;
   end;
 
   [TestFixture]
@@ -153,6 +163,8 @@ type
     [Test]
     procedure IgnoresPrecedingWordThatIsNotAShortFunctionWord;
     [Test]
+    procedure ShortWordJoinsRussianWordOnlyOutsideEnglishText;
+    [Test]
     procedure WaitsForConfiguredNumberOfLetters;
     [Test]
     procedure KeepsPrefixBelowMinimumLength;
@@ -183,9 +195,19 @@ type
     [Test]
     procedure SwitchesFileExtensionTypedOnRussianLayout;
     [Test]
+    procedure SwitchesTechnicalTermTypedOnRussianLayout;
+    [Test]
+    procedure KeepsTechnicalTermWhoseRussianReadingIsAWord;
+    [Test]
+    procedure KeepsPrefixOfTechnicalTerm;
+    [Test]
     procedure ProtectsTechnicalTokensAndAbbreviations;
     [Test]
     procedure ConvertsRussianTailAfterEnglishPrefix;
+    [Test]
+    procedure ConvertsTailTypedAfterLayoutChangedInsideWord;
+    [Test]
+    procedure KeepsMixedWordWhoseTailReadsAsNothing;
     [Test]
     procedure UsesHigherMarginForUnknownLayout;
     [Test]
@@ -544,6 +566,17 @@ const
     'различных работ сборная расположено альбома ';
 
 const
+  // Words of work chat that were switched by hand after typing them on the
+  // wrong layout.
+  RussianWorkSample =
+    'таблица репозиторий подготовь сборка сборке добавь исключи перед сохрани ' +
+    'продолжи проверь окно компетенции слова формул инвариантный клонируй удали ' +
+    'перенеси например обновить найди систем ошибки раздел ';
+  TechnicalTermSample =
+    'dev run local txt exit csv old git ssh pdf md readme ctrl tool issue wsl ' +
+    'del win ide esc com up pr ci en sdl ps png svg stress lazy vps ';
+
+const
   // Percent of a sample the heuristic must catch when typed in the wrong
   // layout, and may wrongly touch when typed in the right one.
   MinRussianDetected = 97;
@@ -551,7 +584,30 @@ const
   MinKeyLettersDetected = 95;
   MaxRussianFalse = 1;
   MaxEnglishFalse = 1;
+  // Words of a work sample that may still be left on the wrong layout.
+  MaxRussianWorkMissed = 0;
+  MaxTechnicalTermsMissed = 0;
 { TDetectionTests }
+
+{ The words of AWords whose switch decision equals ASwitched, each typed on
+  the wrong layout when AWrongLayout. }
+function WordsBySwitch(const AWords: string; AWrongLayout: Boolean;
+  ALayout: TLangKind; ASwitched: Boolean): TArray<string>;
+var
+  Word, Typed: string;
+begin
+  Result := nil;
+  for Word in AWords.Split([' '], TStringSplitOptions.ExcludeEmpty) do
+  begin
+    if AWrongLayout then
+      Typed := ConvertStringSwap(Word)
+    else
+      Typed := Word;
+    if AnalyzeWord(Typed, ALayout, hmBalanced, nil, nil,
+      EmptyPhrase).NeedsSwitch = ASwitched then
+      Result := Result + [Word];
+  end;
+end;
 
 procedure TDetectionTests.CountDetections(const AWords: string;
   AWrongLayout: Boolean; ALayout: TLangKind; out AFlagged, ATotal: Integer);
@@ -617,12 +673,72 @@ begin
     Assert.IsTrue(Ord(ConvertCharSwap(C)) > $0400, C);
 end;
 
+procedure TLayoutTests.RepeatsSwitchRequestUntilConfirmed;
+var
+  Requests: Integer;
+begin
+  Requests := 0;
+  Assert.IsTrue(RequestUntilConfirmed(
+    procedure
+    begin
+      Inc(Requests);
+    end,
+    function: Boolean
+    begin
+      Result := Requests >= 2;
+    end, 3));
+  Assert.AreEqual(2, Requests);
+end;
+
+procedure TLayoutTests.GivesUpSwitchAfterTheLastRequest;
+var
+  Requests: Integer;
+begin
+  Requests := 0;
+  Assert.IsFalse(RequestUntilConfirmed(
+    procedure
+    begin
+      Inc(Requests);
+    end,
+    function: Boolean
+    begin
+      Result := False;
+    end, 2));
+  Assert.AreEqual(2, Requests);
+end;
+
 procedure TDetectionTests.DetectsRussianWordsWithLettersOnPunctuationKeys;
 var
   Flagged, Total: Integer;
 begin
   CountDetections(RussianKeySample, True, lkEN, Flagged, Total);
   Assert.IsTrue(Flagged * 100 >= Total * MinKeyLettersDetected, Format('%d of %d', [Flagged, Total]));
+end;
+
+procedure TDetectionTests.DetectsWorkWordsTypedInEnglish;
+var
+  Missed: TArray<string>;
+begin
+  Missed := WordsBySwitch(RussianWorkSample, True, lkEN, False);
+  Assert.IsTrue(Length(Missed) <= MaxRussianWorkMissed,
+    'missed: ' + string.Join(' ', Missed));
+end;
+
+procedure TDetectionTests.DetectsTechnicalTermsTypedInRussian;
+var
+  Missed: TArray<string>;
+begin
+  Missed := WordsBySwitch(TechnicalTermSample, True, lkRU, False);
+  Assert.IsTrue(Length(Missed) <= MaxTechnicalTermsMissed,
+    'missed: ' + string.Join(' ', Missed));
+end;
+
+procedure TDetectionTests.KeepsTechnicalTermsTypedInEnglish;
+var
+  Switched: TArray<string>;
+begin
+  Switched := WordsBySwitch(TechnicalTermSample, False, lkEN, True);
+  Assert.IsTrue(Length(Switched) = 0, 'switched: ' + string.Join(' ', Switched));
 end;
 
 procedure TReadingTests.LetterModelPrefersTextOfItsOwnLanguage;
@@ -1110,6 +1226,15 @@ begin
   Assert.AreEqual('d', Prev);
 end;
 
+procedure TAnalyzerTests.ShortWordJoinsRussianWordOnlyOutsideEnglishText;
+begin
+  Assert.IsTrue(ShortWordStartsRussianPhrase(PhraseOf([lkEN])));
+  Assert.IsTrue(ShortWordStartsRussianPhrase(PhraseOf([lkEN, lkRU, lkEN])));
+  Assert.IsFalse(ShortWordStartsRussianPhrase(PhraseOf([lkEN, lkEN])));
+  Assert.IsFalse(ShortWordStartsRussianPhrase(PhraseOf([lkEN, lkRU])));
+  Assert.IsFalse(ShortWordStartsRussianPhrase(EmptyPhrase));
+end;
+
 procedure TAnalyzerTests.IgnoresPrecedingWordThatIsNotAShortFunctionWord;
 var
   Prev: string;
@@ -1153,6 +1278,32 @@ begin
     begin
       Result := AWord = 'ghbd';
     end).NeedsSwitch);
+end;
+
+procedure TAnalyzerTests.SwitchesTechnicalTermTypedOnRussianLayout;
+var
+  Analysis: TAnalysisResult;
+begin
+  Analysis := AnalyzeWord('вум', lkRU);
+  Assert.IsTrue(Analysis.NeedsSwitch);
+  Assert.AreEqual(Integer(lkEN), Integer(Analysis.TargetLang));
+  Assert.AreEqual('dev', Analysis.ConvertedText);
+  Analysis := AnalyzeWord('Ыыр', lkRU);
+  Assert.IsTrue(Analysis.NeedsSwitch);
+  Assert.AreEqual('Ssh', Analysis.ConvertedText);
+  Assert.IsFalse(AnalyzeWord('ctrl', lkEN).NeedsSwitch);
+end;
+
+procedure TAnalyzerTests.KeepsTechnicalTermWhoseRussianReadingIsAWord;
+begin
+  Assert.IsFalse(AnalyzeWord('учу', lkRU).NeedsSwitch);
+  Assert.IsFalse(AnalyzeWord('сап', lkRU).NeedsSwitch);
+end;
+
+procedure TAnalyzerTests.KeepsPrefixOfTechnicalTerm;
+begin
+  Assert.IsFalse(AnalyzeWordPrefix('ctr', lkEN, EarlyLettersMin, hmBalanced,
+    nil).NeedsSwitch);
 end;
 
 procedure TAnalyzerTests.DetectsShortKnownWrongLayoutWords;
@@ -1474,6 +1625,35 @@ begin
   Assert.IsFalse(AnalyzeWord('OK.', lkEN).NeedsSwitch);
   Assert.IsFalse(AnalyzeWord('IT.', lkEN).NeedsSwitch);
   Assert.IsFalse(AnalyzeWord('AT.', lkEN).NeedsSwitch);
+end;
+
+procedure TAnalyzerTests.ConvertsTailTypedAfterLayoutChangedInsideWord;
+var
+  Analysis: TAnalysisResult;
+begin
+  Analysis := AnalyzeWord('отрtlfrnbhjdfyj', lkEN);
+  Assert.IsTrue(Analysis.NeedsSwitch);
+  Assert.AreEqual(Integer(lkRU), Integer(Analysis.TargetLang));
+  Assert.AreEqual('отредактировано', Analysis.ConvertedText);
+
+  Analysis := AnalyzeWord('Сбjhrf', lkEN);
+  Assert.IsTrue(Analysis.NeedsSwitch);
+  Assert.AreEqual('Сборка', Analysis.ConvertedText);
+
+  Analysis := AnalyzeWord('helдщ', lkRU);
+  Assert.IsTrue(Analysis.NeedsSwitch);
+  Assert.AreEqual(Integer(lkEN), Integer(Analysis.TargetLang));
+  Assert.AreEqual('hello', Analysis.ConvertedText);
+end;
+
+procedure TAnalyzerTests.KeepsMixedWordWhoseTailReadsAsNothing;
+begin
+  Assert.IsFalse(AnalyzeWord('приветworld', lkEN).NeedsSwitch);
+  Assert.IsFalse(AnalyzeWord('testпривет', lkRU).NeedsSwitch);
+  Assert.IsFalse(AnalyzeWord('отрtlfrnbhjdfyj1', lkEN).NeedsSwitch);
+  // A Russian word with a mark after it has no Latin tail.
+  Assert.IsFalse(AnalyzeWord('слово,', lkRU).NeedsSwitch);
+  Assert.IsFalse(AnalyzeWord('напр.', lkRU).NeedsSwitch);
 end;
 
 procedure TAnalyzerTests.ConvertsRussianTailAfterEnglishPrefix;

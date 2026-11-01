@@ -12,6 +12,11 @@ function IsRussianFunctionWord(const S: string): Boolean;
 { A word of the English frequency list. }
 function IsCommonEnglishWord(const S: string): Boolean;
 function IsFileExtension(const ALower: string): Boolean;
+{ A file extension or a short technical term such as "dev" or "ctrl". Such a
+  word is too short or has too few vowels for the letter model to read it as
+  English. }
+function IsTechnicalTerm(const ALower: string): Boolean;
+function HasTechnicalTermWithPrefix(const ALower: string): Boolean;
 
 { Whether a lowercase word has a vowel of the language; a word without one
   is an abbreviation or noise, not a word of that language. }
@@ -42,6 +47,17 @@ const
     'rs', 'go'
   );
 
+  // "vs" is left out: on the Russian layout it is "мы".
+  TechnicalWords: array of string = [
+    'dev', 'ctrl', 'alt', 'esc', 'del', 'ssh', 'wsl', 'vps', 'sdl', 'ci',
+    'git', 'repo', 'npm', 'env', 'src', 'lib', 'api', 'sdk', 'cli', 'gui',
+    'ui', 'ux', 'ide', 'url', 'http', 'https', 'ftp', 'dns', 'tcp', 'udp',
+    'cpu', 'gpu', 'ram', 'ssd', 'usb', 'vm', 'db', 'id', 'ip', 'os', 'pc',
+    'pr', 'en', 'ok', 'todo'
+  ];
+  // Extensions whose Russian-layout text is a Russian word: "exe" is "учу".
+  AmbiguousTerms: array of string = ['exe', 'cfg'];
+
   // A function word is omitted when its English-layout spelling is itself a
   // common English word.
   RussianFunctionWords: array of string = [
@@ -53,6 +69,8 @@ const
 
 var
   GFileExtensions: TArray<string>;
+  GTechnicalTerms: TArray<string>;
+  GAmbiguousTerms: TArray<string>;
   GFunctionWords: TArray<string>;
 
 function StringOrder(const Left, Right: string): Integer;
@@ -110,6 +128,22 @@ begin
   Result := ContainsSorted(GFileExtensions, ALower);
 end;
 
+function IsTechnicalTerm(const ALower: string): Boolean;
+begin
+  Result := ContainsSorted(GTechnicalTerms, ALower) and
+    not ContainsSorted(GAmbiguousTerms, ALower);
+end;
+
+function HasTechnicalTermWithPrefix(const ALower: string): Boolean;
+var
+  Term: string;
+begin
+  for Term in GTechnicalTerms do
+    if Term.StartsWith(ALower) then
+      Exit(True);
+  Result := False;
+end;
+
 function IsRussianFunctionWord(const S: string): Boolean;
 begin
   Result := ContainsSorted(GFunctionWords, S);
@@ -153,6 +187,8 @@ end;
 
 initialization
   GFileExtensions := SortUnique(CommonFileExtensions);
+  GTechnicalTerms := SortUnique(GFileExtensions + TechnicalWords);
+  GAmbiguousTerms := SortUnique(AmbiguousTerms);
   GFunctionWords := SortUnique(RussianFunctionWords);
 
 end.

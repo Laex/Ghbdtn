@@ -22,7 +22,8 @@ type
     deHookFailure,
     deStaleWorkDropped,
     deUpdateCheckFailed,
-    deUpdateCurrent
+    deUpdateCurrent,
+    deLayoutSwitchFailed
   );
 
 procedure ConfigureDiagnostics(const AFilePath: string;
@@ -88,6 +89,7 @@ begin
     deStaleWorkDropped: Result := 'stale_work_dropped';
     deUpdateCheckFailed: Result := 'update_check_failed';
     deUpdateCurrent: Result := 'update_current';
+    deLayoutSwitchFailed: Result := 'layout_switch_failed';
   else
     Result := 'unknown';
   end;
