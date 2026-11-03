@@ -84,6 +84,35 @@ function NormalizeLineBreaks(const AText: string): string;
 function CaretStepCount(const AText: string): Integer;
 function TryFixInitialCapitals(const AWord: string; out AFixed: string): Boolean;
 function TryFixCapsLockWord(const AWord: string; out AFixed: string): Boolean;
+{ ALine is the text typed since the caret last moved. True when it ends with
+  a word, one space and a single mark from ", . ! ?": the space is a typo and
+  the mark belongs right after the word. ":" and ";" are left alone because
+  they open emoticons, and "." is only judged here, once the next key ends
+  the word, so ".env" and "..." are not affected. }
+function TryFixSpaceBeforeMark(const ALine: string; out AMark: Char): Boolean;
+{ True when ALine ends with a space that follows text: a further space typed
+  there is a repeat. Indentation and runs of leading spaces do not count. }
+function IsRedundantSpace(const ALine: string): Boolean;
+
+type
+  TLineFix = (lfSpacing, lfLetterTypos, lfSentenceCapital, lfDash, lfQuotes,
+    lfRepeatedWord);
+  TLineFixes = set of TLineFix;
+
+{ A one-letter slip in a word of at least five letters: two neighbouring
+  letters swapped ("првиет") or one letter doubled ("приивет"). The word is
+  corrected only when it is not in the frequency list and exactly one such
+  edit gives a word that is. Words with digits, a mixed script or capitals
+  after the first letter are never touched. }
+function TryFixLetterTypo(const AWord: string; out AFixed: string): Boolean;
+{ ALine is the text typed since the caret last moved and ADelimiter the key
+  that ends the word being typed (a space, #9 or #13). The first of the
+  enabled fixes that applies replaces the last AOldLength characters of ALine
+  with ANewText. ALearnWord is the lowercase word to keep as typed when the fix
+  is taken back, or empty. AKept says whether a word was taken back before. }
+function TryFixLineTail(const ALine: string; ADelimiter: Char;
+  AFixes: TLineFixes; const AKept: TNeverSwitchCallback;
+  out AOldLength: Integer; out ANewText, ALearnWord: string): Boolean;
 function NormalizeAnalyzedWord(const AWord: string): string;
 
 implementation
@@ -1201,6 +1230,293 @@ begin
     Exit;
   AFixed := AWord[1].ToUpper + AWord.Substring(1).ToLower;
   Result := True;
+end;
+
+function TryFixSpaceBeforeMark(const ALine: string; out AMark: Char): Boolean;
+var
+  N: Integer;
+  Host: Char;
+begin
+  AMark := #0;
+  Result := False;
+  N := Length(ALine);
+  if N < 3 then
+    Exit;
+  if not CharInSet(ALine[N], [',', '.', '!', '?']) or (ALine[N - 1] <> ' ') then
+    Exit;
+  Host := ALine[N - 2];
+  // A letter, a closing bracket or a closing guillemet; digits are left alone
+  // because "1 , 2" and "3 . 5" are not prose.
+  if not (Host.IsLetter or (Host = ')') or (Host = #$00BB)) then
+    Exit;
+  AMark := ALine[N];
+  Result := True;
+end;
+
+function IsRedundantSpace(const ALine: string): Boolean;
+var
+  N: Integer;
+begin
+  N := Length(ALine);
+  Result := (N >= 2) and (ALine[N] = ' ') and (ALine[N - 1] > ' ');
+end;
+
+function TryFixLetterTypo(const AWord: string; out AFixed: string): Boolean;
+var
+  Lang: TLangKind;
+  Lower, Candidate, Found: string;
+  I, Hits: Integer;
+  C: Char;
+
+  procedure Consider(const ACandidate: string);
+  begin
+    if WordCost(ACandidate, Lang) < 0 then
+      Exit;
+    if Found = '' then
+    begin
+      Found := ACandidate;
+      Hits := 1;
+    end
+    else if ACandidate <> Found then
+      Inc(Hits);
+  end;
+
+begin
+  AFixed := AWord;
+  Result := False;
+  if Length(AWord) < 5 then
+    Exit;
+  if IsCyrillicLetter(AWord[1]) then
+    Lang := lkRU
+  else if IsLatinLetter(AWord[1]) then
+    Lang := lkEN
+  else
+    Exit;
+  for I := 1 to Length(AWord) do
+  begin
+    C := AWord[I];
+    if (Lang = lkRU) and not IsCyrillicLetter(C) then
+      Exit;
+    if (Lang = lkEN) and not IsLatinLetter(C) then
+      Exit;
+    if (I > 1) and not C.IsLower then
+      Exit;
+  end;
+  Lower := AWord.ToLower;
+  if WordCost(Lower, Lang) >= 0 then
+    Exit;
+  Found := '';
+  Hits := 0;
+  for I := 1 to Length(Lower) - 1 do
+    if Lower[I] <> Lower[I + 1] then
+    begin
+      Candidate := Lower;
+      Candidate[I] := Lower[I + 1];
+      Candidate[I + 1] := Lower[I];
+      Consider(Candidate);
+    end
+    else
+      Consider(Copy(Lower, 1, I) + Copy(Lower, I + 2, MaxInt));
+  if Hits <> 1 then
+    Exit;
+  AFixed := Found;
+  if AWord[1].IsUpper then
+    AFixed[1] := AFixed[1].ToUpper;
+  Result := True;
+end;
+
+const
+  // Longest quoted text turned into guillemets; a longer span is more likely
+  // two unrelated quotes than one pair.
+  MaxQuoteSpan = 80;
+  // Words that end in a period without ending a sentence.
+  Abbreviations =
+    ' т д е г ул им см рис напр руб коп стр тыс млн mr mrs ms dr etc vs ';
+  // Words that are written twice in a row on purpose.
+  DoubledWords =
+    ' что как ну да нет очень так вот пока тише бей ха ага that had very bye no yes ha ';
+
+function IsLineSpace(C: Char): Boolean;
+begin
+  Result := CharInSet(C, [' ', #9, #10, #13]);
+end;
+
+function LastTokenStart(const ALine: string): Integer;
+begin
+  Result := Length(ALine);
+  while (Result > 0) and not IsLineSpace(ALine[Result]) do
+    Dec(Result);
+  Inc(Result);
+end;
+
+function IsAllLetters(const AText: string): Boolean;
+var
+  I: Integer;
+begin
+  Result := AText <> '';
+  for I := 1 to Length(AText) do
+    if not AText[I].IsLetter then
+      Exit(False);
+end;
+
+{ The token starting at ATokStart opens a sentence: a period, "!" or "?"
+  and a space come before it. A period after an abbreviation, an initial, a
+  number or another period does not end a sentence. }
+function IsSentenceStart(const ALine: string; ATokStart: Integer): Boolean;
+var
+  I, J: Integer;
+  Prev: string;
+begin
+  Result := False;
+  I := ATokStart - 1;
+  if (I < 1) or (ALine[I] <> ' ') then
+    Exit;
+  while (I > 0) and (ALine[I] = ' ') do
+    Dec(I);
+  if (I < 1) or not CharInSet(ALine[I], ['.', '!', '?']) then
+    Exit;
+  if ALine[I] <> '.' then
+    Exit(True);
+  if (I < 2) or (ALine[I - 1] = '.') or ALine[I - 1].IsDigit then
+    Exit;
+  J := I - 1;
+  while (J > 0) and ALine[J].IsLetter do
+    Dec(J);
+  if (J > 0) and (ALine[J] = '.') then
+    Exit;
+  Prev := Copy(ALine, J + 1, I - 1 - J).ToLower;
+  Result := (Length(Prev) >= 2) and (Pos(' ' + Prev + ' ', Abbreviations) = 0);
+end;
+
+function TryFixLineTail(const ALine: string; ADelimiter: Char;
+  AFixes: TLineFixes; const AKept: TNeverSwitchCallback;
+  out AOldLength: Integer; out ANewText, ALearnWord: string): Boolean;
+var
+  N, TokStart, CoreStart, CoreEnd, E, O, I, P: Integer;
+  Mark: Char;
+  Token, Core, Fixed, Trail, Prev: string;
+
+  function Done(AOld: Integer; const ANew: string): Boolean;
+  begin
+    AOldLength := AOld;
+    ANewText := ANew;
+    Result := True;
+  end;
+
+  function IsKept(const AWord: string): Boolean;
+  begin
+    Result := Assigned(AKept) and AKept(AWord.ToLower);
+  end;
+
+begin
+  AOldLength := 0;
+  ANewText := '';
+  ALearnWord := '';
+  Result := False;
+  N := Length(ALine);
+  if N = 0 then
+    Exit;
+  TokStart := LastTokenStart(ALine);
+  Token := Copy(ALine, TokStart, MaxInt);
+
+  if lfSpacing in AFixes then
+  begin
+    if TryFixSpaceBeforeMark(ALine, Mark) then
+      Exit(Done(2, Mark));
+    if (N >= 3) and (ALine[N] = ')') and (ALine[N - 1] = ' ') and
+       ALine[N - 2].IsLetterOrDigit then
+      Exit(Done(2, ')'));
+    if (N >= 3) and (ALine[N] = ',') and (ALine[N - 1] = ',') and
+       (ALine[N - 2].IsLetterOrDigit or (ALine[N - 2] = ')')) then
+      Exit(Done(2, ','));
+    // "( word" -> "(word"; a bracket glued to a name is a call, not prose.
+    if (TokStart > 2) and (TokStart <= N) and (ALine[TokStart - 1] = ' ') and
+       (ALine[TokStart - 2] = '(') and
+       ((TokStart = 3) or IsLineSpace(ALine[TokStart - 3])) then
+      Exit(Done(N - TokStart + 3, '(' + Token));
+    // "слово,слово" typed in Russian: a space follows the comma.
+    P := Pos(',', Token);
+    if (P > 1) and (P < Length(Token)) and (Pos(',', Token, P + 1) = 0) and
+       IsCyrillicLetter(Token[P - 1]) and IsCyrillicLetter(Token[P + 1]) then
+    begin
+      Fixed := Token;
+      Insert(' ', Fixed, P + 1);
+      Exit(Done(Length(Token), Fixed));
+    end;
+  end;
+
+  if (lfDash in AFixes) and (ADelimiter = ' ') and (N >= 3) and
+     (ALine[N] = '-') and (ALine[N - 1] = ' ') and
+     (ALine[N - 2].IsLetterOrDigit or (ALine[N - 2] = ')') or
+      (ALine[N - 2] = #$00BB)) then
+    Exit(Done(1, #$2013));
+
+  if lfQuotes in AFixes then
+  begin
+    E := N;
+    Trail := '';
+    if CharInSet(ALine[E], [',', '.', '!', '?', ';', ':']) then
+    begin
+      Trail := ALine[E];
+      Dec(E);
+    end;
+    if (E > 2) and (ALine[E] = '"') then
+    begin
+      O := E - 1;
+      while (O > 0) and (ALine[O] <> '"') do
+        Dec(O);
+      if (O > 0) and (E - O > 1) and (E - O <= MaxQuoteSpan) and
+         ((O = 1) or CharInSet(ALine[O - 1], [' ', #9, '(', '['])) and
+         (ALine[O + 1] > ' ') and (ALine[E - 1] > ' ') then
+        Exit(Done(N - O + 1,
+          #$00AB + Copy(ALine, O + 1, E - O - 1) + #$00BB + Trail));
+    end;
+  end;
+
+  if (lfRepeatedWord in AFixes) and (TokStart > 1) and (TokStart <= N) and
+     (ALine[TokStart - 1] = ' ') and (Length(Token) >= 2) and
+     IsAllLetters(Token) then
+  begin
+    I := TokStart - 2;
+    while (I > 0) and not IsLineSpace(ALine[I]) do
+      Dec(I);
+    Prev := Copy(ALine, I + 1, TokStart - 2 - I);
+    if (Prev.ToLower = Token.ToLower) and
+       (Pos(' ' + Token.ToLower + ' ', DoubledWords) = 0) then
+      Exit(Done(Length(Token) + 1, ''));
+  end;
+
+  if AFixes * [lfLetterTypos, lfSentenceCapital] <> [] then
+  begin
+    CoreStart := TokStart;
+    while (CoreStart <= N) and
+          ((ALine[CoreStart] = #$00AB) or
+           CharInSet(ALine[CoreStart], ['(', '[', '"'])) do
+      Inc(CoreStart);
+    CoreEnd := N;
+    while (CoreEnd >= CoreStart) and
+          ((ALine[CoreEnd] = #$00BB) or
+           CharInSet(ALine[CoreEnd],
+             [',', '.', '!', '?', ';', ':', ')', ']', '"'])) do
+      Dec(CoreEnd);
+    if CoreEnd < CoreStart then
+      Exit;
+    Core := Copy(ALine, CoreStart, CoreEnd - CoreStart + 1);
+    Trail := Copy(ALine, CoreEnd + 1, MaxInt);
+    Fixed := Core;
+    if (lfLetterTypos in AFixes) and not IsKept(Core) and
+       TryFixLetterTypo(Core, Prev) then
+      Fixed := Prev;
+    if (lfSentenceCapital in AFixes) and IsAllLetters(Fixed) and
+       Fixed[1].IsLower and not IsKept(Fixed) and
+       IsSentenceStart(ALine, TokStart) then
+      Fixed[1] := Fixed[1].ToUpper;
+    if Fixed <> Core then
+    begin
+      ALearnWord := Core.ToLower;
+      Exit(Done(Length(Core) + Length(Trail), Fixed + Trail));
+    end;
+  end;
 end;
 
 function ApplyCaseMode(const AText: string; AMode: TCaseMode): string;

@@ -70,6 +70,12 @@ type
     FCaseFixKept: TStringList;
     FFixInitialCaps: Boolean;
     FFixCapsLock: Boolean;
+    FFixPunctuationSpacing: Boolean;
+    FFixLetterTypos: Boolean;
+    FCapitalizeSentences: Boolean;
+    FTypographicDash: Boolean;
+    FTypographicQuotes: Boolean;
+    FRemoveRepeatedWords: Boolean;
     FPauseInFullscreen: Boolean;
     FEnglishInSecureFields: Boolean;
     FDoubleCtrlEnabled: Boolean;
@@ -127,6 +133,18 @@ type
     procedure SetFixInitialCaps(AValue: Boolean);
     function GetFixCapsLock: Boolean;
     procedure SetFixCapsLock(AValue: Boolean);
+    function GetFixPunctuationSpacing: Boolean;
+    procedure SetFixPunctuationSpacing(AValue: Boolean);
+    function GetFixLetterTypos: Boolean;
+    procedure SetFixLetterTypos(AValue: Boolean);
+    function GetCapitalizeSentences: Boolean;
+    procedure SetCapitalizeSentences(AValue: Boolean);
+    function GetTypographicDash: Boolean;
+    procedure SetTypographicDash(AValue: Boolean);
+    function GetTypographicQuotes: Boolean;
+    procedure SetTypographicQuotes(AValue: Boolean);
+    function GetRemoveRepeatedWords: Boolean;
+    procedure SetRemoveRepeatedWords(AValue: Boolean);
     function GetPauseInFullscreen: Boolean;
     procedure SetPauseInFullscreen(AValue: Boolean);
     function GetEnglishInSecureFields: Boolean;
@@ -207,6 +225,12 @@ type
     property CaretHintAnimate: Boolean read GetCaretHintAnimate write SetCaretHintAnimate;
     property FixInitialCaps: Boolean read GetFixInitialCaps write SetFixInitialCaps;
     property FixCapsLock: Boolean read GetFixCapsLock write SetFixCapsLock;
+    property FixPunctuationSpacing: Boolean read GetFixPunctuationSpacing write SetFixPunctuationSpacing;
+    property FixLetterTypos: Boolean read GetFixLetterTypos write SetFixLetterTypos;
+    property CapitalizeSentences: Boolean read GetCapitalizeSentences write SetCapitalizeSentences;
+    property TypographicDash: Boolean read GetTypographicDash write SetTypographicDash;
+    property TypographicQuotes: Boolean read GetTypographicQuotes write SetTypographicQuotes;
+    property RemoveRepeatedWords: Boolean read GetRemoveRepeatedWords write SetRemoveRepeatedWords;
     property PauseInFullscreen: Boolean read GetPauseInFullscreen write SetPauseInFullscreen;
     property EnglishInSecureFields: Boolean read GetEnglishInSecureFields write SetEnglishInSecureFields;
     property DoubleCtrlEnabled: Boolean read GetDoubleCtrlEnabled write SetDoubleCtrlEnabled;
@@ -404,6 +428,12 @@ begin
   FCaretHintAnimate := True;
   FFixInitialCaps := True;
   FFixCapsLock := True;
+  FFixPunctuationSpacing := True;
+  FFixLetterTypos := True;
+  FCapitalizeSentences := False;
+  FTypographicDash := False;
+  FTypographicQuotes := False;
+  FRemoveRepeatedWords := False;
   FPauseInFullscreen := True;
   FEnglishInSecureFields := True;
   FDoubleCtrlEnabled := True;
@@ -611,6 +641,78 @@ procedure TSettings.SetFixCapsLock(AValue: Boolean);
 begin
   FLock.Acquire;
   try FFixCapsLock := AValue; finally FLock.Release; end;
+end;
+
+function TSettings.GetFixPunctuationSpacing: Boolean;
+begin
+  FLock.Acquire;
+  try Result := FFixPunctuationSpacing; finally FLock.Release; end;
+end;
+
+procedure TSettings.SetFixPunctuationSpacing(AValue: Boolean);
+begin
+  FLock.Acquire;
+  try FFixPunctuationSpacing := AValue; finally FLock.Release; end;
+end;
+
+function TSettings.GetFixLetterTypos: Boolean;
+begin
+  FLock.Acquire;
+  try Result := FFixLetterTypos; finally FLock.Release; end;
+end;
+
+procedure TSettings.SetFixLetterTypos(AValue: Boolean);
+begin
+  FLock.Acquire;
+  try FFixLetterTypos := AValue; finally FLock.Release; end;
+end;
+
+function TSettings.GetCapitalizeSentences: Boolean;
+begin
+  FLock.Acquire;
+  try Result := FCapitalizeSentences; finally FLock.Release; end;
+end;
+
+procedure TSettings.SetCapitalizeSentences(AValue: Boolean);
+begin
+  FLock.Acquire;
+  try FCapitalizeSentences := AValue; finally FLock.Release; end;
+end;
+
+function TSettings.GetTypographicDash: Boolean;
+begin
+  FLock.Acquire;
+  try Result := FTypographicDash; finally FLock.Release; end;
+end;
+
+procedure TSettings.SetTypographicDash(AValue: Boolean);
+begin
+  FLock.Acquire;
+  try FTypographicDash := AValue; finally FLock.Release; end;
+end;
+
+function TSettings.GetTypographicQuotes: Boolean;
+begin
+  FLock.Acquire;
+  try Result := FTypographicQuotes; finally FLock.Release; end;
+end;
+
+procedure TSettings.SetTypographicQuotes(AValue: Boolean);
+begin
+  FLock.Acquire;
+  try FTypographicQuotes := AValue; finally FLock.Release; end;
+end;
+
+function TSettings.GetRemoveRepeatedWords: Boolean;
+begin
+  FLock.Acquire;
+  try Result := FRemoveRepeatedWords; finally FLock.Release; end;
+end;
+
+procedure TSettings.SetRemoveRepeatedWords(AValue: Boolean);
+begin
+  FLock.Acquire;
+  try FRemoveRepeatedWords := AValue; finally FLock.Release; end;
 end;
 
 function TSettings.GetPauseInFullscreen: Boolean;
@@ -842,6 +944,26 @@ begin
   BoundDictionary(Dict);
 end;
 
+{ TryGetValue clears its out value when the key is missing, which would turn
+  every setting added after a config was written into False or 0. }
+procedure ReadBoolean(ARoot: TJSONObject; const AName: string;
+  var AValue: Boolean);
+var
+  Value: Boolean;
+begin
+  if ARoot.TryGetValue<Boolean>(AName, Value) then
+    AValue := Value;
+end;
+
+procedure ReadInteger(ARoot: TJSONObject; const AName: string;
+  var AValue: Integer);
+var
+  Value: Integer;
+begin
+  if ARoot.TryGetValue<Integer>(AName, Value) then
+    AValue := Value;
+end;
+
 function TSettings.LoadJsonFile(const APath: string): Boolean;
 var
   Parsed: TJSONValue;
@@ -867,32 +989,38 @@ begin
     FLock.Acquire;
     try
     SetDefaultsUnlocked;
-    Root.TryGetValue<Boolean>('SoundOnRussianInput', FSoundOnRussianInput);
-    Root.TryGetValue<Boolean>('SoundOnSwitch', FSoundOnSwitch);
-    Root.TryGetValue<Integer>('SoundVolume', FSoundVolume);
+    ReadBoolean(Root, 'SoundOnRussianInput', FSoundOnRussianInput);
+    ReadBoolean(Root, 'SoundOnSwitch', FSoundOnSwitch);
+    ReadInteger(Root, 'SoundVolume', FSoundVolume);
     FSoundVolume := Min(Max(FSoundVolume, 0), SoundVolumeMax);
-    Root.TryGetValue<Boolean>('DoubleLeftShiftEnabled', FDoubleLeftShiftEnabled);
-    Root.TryGetValue<Boolean>('SwitchLayoutAfterSelection', FSwitchLayoutAfterSelection);
-    Root.TryGetValue<Boolean>('AutoSwitchEnabled', FAutoSwitchEnabled);
-    Root.TryGetValue<Boolean>('AutoStart', FAutoStart);
+    ReadBoolean(Root, 'DoubleLeftShiftEnabled', FDoubleLeftShiftEnabled);
+    ReadBoolean(Root, 'SwitchLayoutAfterSelection', FSwitchLayoutAfterSelection);
+    ReadBoolean(Root, 'AutoSwitchEnabled', FAutoSwitchEnabled);
+    ReadBoolean(Root, 'AutoStart', FAutoStart);
     if Root.TryGetValue<string>('HeuristicMode', TextValue) then
       FHeuristicMode := StringToMode(TextValue);
     if Root.TryGetValue<string>('DiagnosticsLevel', TextValue) then
       FDiagnosticsLevel := StringToDiagnostics(TextValue);
-    Root.TryGetValue<Integer>('CaretHintOffsetX', FCaretHintOffsetX);
-    Root.TryGetValue<Integer>('CaretHintOffsetY', FCaretHintOffsetY);
+    ReadInteger(Root, 'CaretHintOffsetX', FCaretHintOffsetX);
+    ReadInteger(Root, 'CaretHintOffsetY', FCaretHintOffsetY);
     if Root.TryGetValue<string>('CaretHintMode', TextValue) then
       FCaretHintMode := StringToCaretHintMode(TextValue);
-    Root.TryGetValue<Boolean>('CaretHintFlash', FCaretHintFlash);
-    Root.TryGetValue<Boolean>('CaretHintAnimate', FCaretHintAnimate);
-    Root.TryGetValue<Boolean>('FixInitialCaps', FFixInitialCaps);
-    Root.TryGetValue<Boolean>('FixCapsLock', FFixCapsLock);
-    Root.TryGetValue<Boolean>('PauseInFullscreen', FPauseInFullscreen);
-    Root.TryGetValue<Boolean>('EnglishInSecureFields', FEnglishInSecureFields);
-    Root.TryGetValue<Boolean>('DoubleCtrlEnabled', FDoubleCtrlEnabled);
-    Root.TryGetValue<Boolean>('RightCtrlSwitchEnabled', FRightCtrlSwitchEnabled);
-    Root.TryGetValue<Boolean>('EarlySwitchEnabled', FEarlySwitchEnabled);
-    Root.TryGetValue<Integer>('EarlySwitchLetters', FEarlySwitchLetters);
+    ReadBoolean(Root, 'CaretHintFlash', FCaretHintFlash);
+    ReadBoolean(Root, 'CaretHintAnimate', FCaretHintAnimate);
+    ReadBoolean(Root, 'FixInitialCaps', FFixInitialCaps);
+    ReadBoolean(Root, 'FixCapsLock', FFixCapsLock);
+    ReadBoolean(Root, 'FixPunctuationSpacing', FFixPunctuationSpacing);
+    ReadBoolean(Root, 'FixLetterTypos', FFixLetterTypos);
+    ReadBoolean(Root, 'CapitalizeSentences', FCapitalizeSentences);
+    ReadBoolean(Root, 'TypographicDash', FTypographicDash);
+    ReadBoolean(Root, 'TypographicQuotes', FTypographicQuotes);
+    ReadBoolean(Root, 'RemoveRepeatedWords', FRemoveRepeatedWords);
+    ReadBoolean(Root, 'PauseInFullscreen', FPauseInFullscreen);
+    ReadBoolean(Root, 'EnglishInSecureFields', FEnglishInSecureFields);
+    ReadBoolean(Root, 'DoubleCtrlEnabled', FDoubleCtrlEnabled);
+    ReadBoolean(Root, 'RightCtrlSwitchEnabled', FRightCtrlSwitchEnabled);
+    ReadBoolean(Root, 'EarlySwitchEnabled', FEarlySwitchEnabled);
+    ReadInteger(Root, 'EarlySwitchLetters', FEarlySwitchLetters);
     FEarlySwitchLetters := Min(Max(FEarlySwitchLetters, EarlyLettersMin),
       EarlyLettersMax);
 
@@ -1109,6 +1237,13 @@ begin
     Root.AddPair('Exclusions', ExclusionsArray);
     Root.AddPair('FixInitialCaps', TJSONBool.Create(FFixInitialCaps));
     Root.AddPair('FixCapsLock', TJSONBool.Create(FFixCapsLock));
+    Root.AddPair('FixPunctuationSpacing',
+      TJSONBool.Create(FFixPunctuationSpacing));
+    Root.AddPair('FixLetterTypos', TJSONBool.Create(FFixLetterTypos));
+    Root.AddPair('CapitalizeSentences', TJSONBool.Create(FCapitalizeSentences));
+    Root.AddPair('TypographicDash', TJSONBool.Create(FTypographicDash));
+    Root.AddPair('TypographicQuotes', TJSONBool.Create(FTypographicQuotes));
+    Root.AddPair('RemoveRepeatedWords', TJSONBool.Create(FRemoveRepeatedWords));
     Root.AddPair('PauseInFullscreen', TJSONBool.Create(FPauseInFullscreen));
     Root.AddPair('EnglishInSecureFields', TJSONBool.Create(FEnglishInSecureFields));
     Root.AddPair('DoubleCtrlEnabled', TJSONBool.Create(FDoubleCtrlEnabled));

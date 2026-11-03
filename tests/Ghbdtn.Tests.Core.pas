@@ -193,6 +193,18 @@ type
     [Test]
     procedure FixesWordTypedWithCapsLock;
     [Test]
+    procedure FindsSpaceBeforeClosingMark;
+    [Test]
+    procedure KeepsSpaceWhereMarkIsNotATypo;
+    [Test]
+    procedure FixesSwappedAndDoubledLetters;
+    [Test]
+    procedure KeepsWordsThatAreNotTypos;
+    [Test]
+    procedure FixesLineTailByEnabledRules;
+    [Test]
+    procedure RecognizesRepeatedSpace;
+    [Test]
     procedure SwitchesFileExtensionTypedOnRussianLayout;
     [Test]
     procedure SwitchesTechnicalTermTypedOnRussianLayout;
@@ -255,6 +267,8 @@ type
     procedure SavesAndLoadsAllSettings;
     [Test]
     procedure PersistsInitialCapsOptions;
+    [Test]
+    procedure KeepsDefaultsForKeysMissingFromConfig;
     [Test]
     procedure SupportsWildcardExclusionsAndRules;
     [Test]
@@ -1596,6 +1610,113 @@ begin
   Assert.IsFalse(TryFixCapsLockWord('', Fixed));
 end;
 
+procedure TAnalyzerTests.FindsSpaceBeforeClosingMark;
+var
+  Mark: Char;
+begin
+  Assert.IsTrue(TryFixSpaceBeforeMark('привет ,', Mark));
+  Assert.AreEqual(',', string(Mark));
+  Assert.IsTrue(TryFixSpaceBeforeMark('Hello world .', Mark));
+  Assert.AreEqual('.', string(Mark));
+  Assert.IsTrue(TryFixSpaceBeforeMark('Как дела ?', Mark));
+  Assert.AreEqual('?', string(Mark));
+  Assert.IsTrue(TryFixSpaceBeforeMark('Ура !', Mark));
+  Assert.AreEqual('!', string(Mark));
+  Assert.IsTrue(TryFixSpaceBeforeMark('(см. выше) .', Mark));
+end;
+
+procedure TAnalyzerTests.FixesSwappedAndDoubledLetters;
+var
+  Fixed: string;
+begin
+  Assert.IsTrue(TryFixLetterTypo('првиет', Fixed));
+  Assert.AreEqual('привет', Fixed);
+  Assert.IsTrue(TryFixLetterTypo('Приивет', Fixed));
+  Assert.AreEqual('Привет', Fixed);
+end;
+
+procedure TAnalyzerTests.KeepsWordsThatAreNotTypos;
+var
+  Fixed: string;
+begin
+  // Known words, short words, mixed case and other scripts stay as typed.
+  Assert.IsFalse(TryFixLetterTypo('привет', Fixed));
+  Assert.IsFalse(TryFixLetterTypo('прив', Fixed));
+  Assert.IsFalse(TryFixLetterTypo('пРиивет', Fixed));
+  Assert.IsFalse(TryFixLetterTypo('привет1', Fixed));
+  Assert.IsFalse(TryFixLetterTypo('ыыыыыы', Fixed));
+end;
+
+procedure TAnalyzerTests.FixesLineTailByEnabledRules;
+var
+  Old: Integer;
+  NewText, Learn: string;
+begin
+  // ",," collapses; the rule is off without lfSpacing.
+  Assert.IsTrue(TryFixLineTail('да,,', ' ', [lfSpacing], nil, Old, NewText, Learn));
+  Assert.AreEqual(2, Old);
+  Assert.AreEqual(',', NewText);
+  Assert.IsFalse(TryFixLineTail('да,,', ' ', [lfDash], nil, Old, NewText, Learn));
+  // Space inside a bracket.
+  Assert.IsTrue(TryFixLineTail('он ( да', ' ', [lfSpacing], nil, Old, NewText, Learn));
+  Assert.AreEqual('(да', NewText);
+  // Space after a comma between Russian words.
+  Assert.IsTrue(TryFixLineTail('да,нет', ' ', [lfSpacing], nil, Old, NewText, Learn));
+  Assert.AreEqual('да, нет', NewText);
+  // Dash between words.
+  Assert.IsTrue(TryFixLineTail('он -', ' ', [lfDash], nil, Old, NewText, Learn));
+  Assert.AreEqual(#$2013, NewText);
+  // Quotes.
+  Assert.IsTrue(TryFixLineTail('он "да"', ' ', [lfQuotes], nil, Old, NewText, Learn));
+  Assert.AreEqual(#$00AB + 'да' + #$00BB, NewText);
+  // Repeated word, but not a word that is doubled on purpose.
+  Assert.IsTrue(TryFixLineTail('он был был', ' ', [lfRepeatedWord], nil, Old, NewText, Learn));
+  Assert.AreEqual(4, Old);
+  Assert.AreEqual('', NewText);
+  Assert.IsFalse(TryFixLineTail('очень очень', ' ', [lfRepeatedWord], nil, Old, NewText, Learn));
+  // Capital after a sentence end, but not after an abbreviation.
+  Assert.IsTrue(TryFixLineTail('Привет. как', ' ', [lfSentenceCapital], nil, Old, NewText, Learn));
+  Assert.AreEqual('Как', NewText);
+  Assert.AreEqual('как', Learn);
+  Assert.IsFalse(TryFixLineTail('см. как', ' ', [lfSentenceCapital], nil, Old, NewText, Learn));
+  // A word the user chose to keep is left alone.
+  Assert.IsFalse(TryFixLineTail('Привет. как', ' ', [lfSentenceCapital],
+    function(const AWord: string): Boolean begin Result := True; end,
+    Old, NewText, Learn));
+end;
+
+procedure TAnalyzerTests.KeepsSpaceWhereMarkIsNotATypo;
+var
+  Mark: Char;
+begin
+  // Emoticons and ratios start with ":" or ";".
+  Assert.IsFalse(TryFixSpaceBeforeMark('привет :', Mark));
+  Assert.IsFalse(TryFixSpaceBeforeMark('привет ;', Mark));
+  // Numbers and ellipses are not prose.
+  Assert.IsFalse(TryFixSpaceBeforeMark('1 ,', Mark));
+  Assert.IsFalse(TryFixSpaceBeforeMark('ждём ...', Mark));
+  Assert.IsFalse(TryFixSpaceBeforeMark('ждём ,,', Mark));
+  // No space before the mark, or no text before the space.
+  Assert.IsFalse(TryFixSpaceBeforeMark('привет,', Mark));
+  Assert.IsFalse(TryFixSpaceBeforeMark(' ,', Mark));
+  Assert.IsFalse(TryFixSpaceBeforeMark('  ,', Mark));
+  Assert.IsFalse(TryFixSpaceBeforeMark('', Mark));
+  Assert.AreEqual(#0, Mark);
+end;
+
+procedure TAnalyzerTests.RecognizesRepeatedSpace;
+begin
+  Assert.IsTrue(IsRedundantSpace('слово '));
+  Assert.IsTrue(IsRedundantSpace('Привет, '));
+  Assert.IsTrue(IsRedundantSpace('a1 '));
+  Assert.IsFalse(IsRedundantSpace('слово'));
+  Assert.IsFalse(IsRedundantSpace(' '));
+  Assert.IsFalse(IsRedundantSpace('    '));
+  Assert.IsFalse(IsRedundantSpace('слово  '));
+  Assert.IsFalse(IsRedundantSpace(#9' '));
+  Assert.IsFalse(IsRedundantSpace(''));
+end;
+
 procedure TAnalyzerTests.SwitchesFileExtensionTypedOnRussianLayout;
 var
   Mode: THeuristicMode;
@@ -1882,11 +2003,29 @@ begin
     Assert.IsTrue(Source.IsCaseFixKept('Только'));
     Source.FixInitialCaps := False;
     Source.FixCapsLock := False;
+    Assert.IsTrue(Source.FixPunctuationSpacing);
+    Assert.IsTrue(Source.FixLetterTypos);
+    Assert.IsFalse(Source.CapitalizeSentences);
+    Assert.IsFalse(Source.TypographicDash);
+    Assert.IsFalse(Source.TypographicQuotes);
+    Assert.IsFalse(Source.RemoveRepeatedWords);
+    Source.FixPunctuationSpacing := False;
+    Source.FixLetterTypos := False;
+    Source.CapitalizeSentences := True;
+    Source.TypographicDash := True;
+    Source.TypographicQuotes := True;
+    Source.RemoveRepeatedWords := True;
     Source.SaveToFile;
 
     Loaded.LoadFromFile;
     Assert.IsFalse(Loaded.FixInitialCaps);
     Assert.IsFalse(Loaded.FixCapsLock);
+    Assert.IsFalse(Loaded.FixPunctuationSpacing);
+    Assert.IsFalse(Loaded.FixLetterTypos);
+    Assert.IsTrue(Loaded.CapitalizeSentences);
+    Assert.IsTrue(Loaded.TypographicDash);
+    Assert.IsTrue(Loaded.TypographicQuotes);
+    Assert.IsTrue(Loaded.RemoveRepeatedWords);
     Assert.IsTrue(Loaded.IsCaseFixKept('только'));
     Assert.IsFalse(Loaded.IsCaseFixKept('привет'));
   finally
@@ -1990,6 +2129,29 @@ begin
     Assert.IsFalse(Settings.IsNeverSwitchWord('example'));
   finally
     Settings.Free;
+  end;
+end;
+
+procedure TSettingsTests.KeepsDefaultsForKeysMissingFromConfig;
+var
+  Path: string;
+  Settings: TSettings;
+begin
+  Path := UniqueTestPath('missing-keys');
+  TFile.WriteAllText(Path, '{"SchemaVersion":4,"AutoStart":true}',
+    TEncoding.UTF8);
+  Settings := TSettings.Create(Path);
+  try
+    Settings.LoadFromFile;
+    Assert.IsTrue(Settings.AutoStart);
+    Assert.IsTrue(Settings.FixPunctuationSpacing);
+    Assert.IsTrue(Settings.FixInitialCaps);
+    Assert.IsTrue(Settings.PauseInFullscreen);
+    Assert.IsTrue(Settings.CaretHintFlash);
+    Assert.IsTrue(Settings.SoundVolume > 0);
+  finally
+    Settings.Free;
+    TFile.Delete(Path);
   end;
 end;
 

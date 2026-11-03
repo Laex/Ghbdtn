@@ -31,7 +31,8 @@ uses
   Ghbdtn.Settings,
   Ghbdtn.AutoStart,
   Ghbdtn.Hook,
-  Ghbdtn.Sound;
+  Ghbdtn.Sound,
+  Ghbdtn.Update;
 
 type
   TLearningRow = class
@@ -782,6 +783,12 @@ type
     FAutoStart: TSwitch;
     FFixCaps: TSwitch;
     FFixCapsLock: TSwitch;
+    FFixSpacing: TSwitch;
+    FFixTypos: TSwitch;
+    FCapSentences: TSwitch;
+    FDash: TSwitch;
+    FQuotes: TSwitch;
+    FRepeated: TSwitch;
     FPauseFullscreen: TSwitch;
     FEnglishSecure: TSwitch;
     FDoubleCtrl: TSwitch;
@@ -806,8 +813,10 @@ type
       ALeft, ATop: Integer; AOnClick: TNotifyEvent): TButton;
     procedure VolumeChange(Sender: TObject);
     procedure ShowVolume;
-    procedure BuildMain(var AY: Integer);
-    procedure BuildAdvanced(var AY: Integer);
+    function AddColumn(AParent: TWinControl; ALeft, AWidth: Integer): TPanel;
+    procedure BuildMain(ALeft, ARight: TWinControl; var ALeftY, ARightY: Integer);
+    procedure BuildAdvanced(ALeft, ARight: TWinControl; var ALeftY,
+      ARightY: Integer);
     procedure FitHeight;
     procedure SpoilerClick(Sender: TObject);
     procedure WheelScroll(Sender: TObject; Shift: TShiftState;
@@ -949,80 +958,111 @@ begin
   Result.Top := ATop;
 end;
 
-procedure TfrmSettings.BuildMain(var AY: Integer);
+function TfrmSettings.AddColumn(AParent: TWinControl; ALeft,
+  AWidth: Integer): TPanel;
 begin
-  AddSection(FMainPanel, AY, 'Основное');
-  FAutoSwitch := AddToggle(FMainPanel, AY, 'Исправлять раскладку автоматически');
-  FMode := AddCombo(FMainPanel, AY, 'Уверенность исправления',
-    ['Осторожно', 'Сбалансированно', 'Агрессивно']);
-  FAutoStart := AddToggle(FMainPanel, AY, 'Запускать вместе с Windows');
+  Result := TPanel.Create(Self);
+  Result.Parent := AParent;
+  Result.BevelOuter := bvNone;
+  Result.ParentBackground := False;
+  Result.Color := clWindow;
+  // Tall enough for any content; the page height is set from the rows added.
+  Result.SetBounds(ALeft, 0, AWidth, S(2000));
+end;
 
-  AddSection(FMainPanel, AY, 'Исправления при наборе');
-  FFixCaps := AddToggle(FMainPanel, AY,
-    'Две заглавные в начале слова (ТОлько -> Только)');
-  FFixCapsLock := AddToggle(FMainPanel, AY,
-    'Слово с нажатым Caps Lock (пРИВЕТ -> Привет)');
-  FEarlySwitch := AddToggle(FMainPanel, AY,
+procedure TfrmSettings.BuildMain(ALeft, ARight: TWinControl; var ALeftY,
+  ARightY: Integer);
+begin
+  AddSection(ALeft, ALeftY, 'Основное');
+  FAutoSwitch := AddToggle(ALeft, ALeftY, 'Исправлять раскладку автоматически');
+  FMode := AddCombo(ALeft, ALeftY, 'Уверенность исправления',
+    ['Осторожно', 'Сбалансированно', 'Агрессивно']);
+  FAutoStart := AddToggle(ALeft, ALeftY, 'Запускать вместе с Windows');
+
+  AddSection(ALeft, ALeftY, 'Раскладка при наборе');
+  FEarlySwitch := AddToggle(ALeft, ALeftY,
     'Переключать раскладку, не дожидаясь конца слова');
-  FEarlyLetters := AddCombo(FMainPanel, AY, 'Букв до раннего переключения',
+  FEarlyLetters := AddCombo(ALeft, ALeftY, 'Букв до раннего переключения',
     ['3', '4', '5', '6', '7', '8']);
-  FEnglishSecure := AddToggle(FMainPanel, AY,
+  FEnglishSecure := AddToggle(ALeft, ALeftY,
     'Английская раскладка в полях пароля и e-mail');
 
-  AddSection(FMainPanel, AY, 'Жесты');
-  FDoubleShift := AddToggle(FMainPanel, AY,
+  AddSection(ALeft, ALeftY, 'Текст при наборе');
+  FFixCaps := AddToggle(ALeft, ALeftY,
+    'Две заглавные в начале слова (ТОлько -> Только)');
+  FFixCapsLock := AddToggle(ALeft, ALeftY,
+    'Слово с нажатым Caps Lock (пРИВЕТ -> Привет)');
+  FFixSpacing := AddToggle(ALeft, ALeftY,
+    'Лишние пробелы и запятые (слово , -> слово,; ,, -> ,)');
+  FFixTypos := AddToggle(ALeft, ALeftY,
+    'Опечатки в буквах: перестановка, двойная буква');
+
+  AddSection(ARight, ARightY, 'Спорные исправления');
+  FCapSentences := AddToggle(ARight, ARightY,
+    'Заглавная буква после конца предложения');
+  FDash := AddToggle(ARight, ARightY, 'Тире вместо дефиса между словами');
+  FQuotes := AddToggle(ARight, ARightY, 'Кавычки-ёлочки вместо "');
+  FRepeated := AddToggle(ARight, ARightY, 'Удалять повтор слова (в в -> в)');
+
+  AddSection(ARight, ARightY, 'Жесты');
+  FDoubleShift := AddToggle(ARight, ARightY,
     'Двойной Left Shift: конвертировать слово или выделение');
-  FDoubleCtrl := AddToggle(FMainPanel, AY,
+  FDoubleCtrl := AddToggle(ARight, ARightY,
     'Двойной Left Ctrl: конвертировать набранную строку');
-  FRightCtrlSwitch := AddToggle(FMainPanel, AY,
+  FRightCtrlSwitch := AddToggle(ARight, ARightY,
     'Одинарный Right Ctrl: переключает раскладку');
 
-  AddSection(FMainPanel, AY, 'Звук и подсказки');
-  FSoundSwitch := AddToggle(FMainPanel, AY, 'Звук при переключении');
-  FVolume := AddVolume(FMainPanel, AY);
-  FHintMode := AddCombo(FMainPanel, AY, 'Подсказка у каретки',
+  AddSection(ARight, ARightY, 'Звук и подсказки');
+  FSoundSwitch := AddToggle(ARight, ARightY, 'Звук при переключении');
+  FVolume := AddVolume(ARight, ARightY);
+  FHintMode := AddCombo(ARight, ARightY, 'Подсказка у каретки',
     ['На время', 'Следует за кареткой', 'Не показывать']);
 end;
 
-procedure TfrmSettings.BuildAdvanced(var AY: Integer);
+procedure TfrmSettings.BuildAdvanced(ALeft, ARight: TWinControl; var ALeftY,
+  ARightY: Integer);
 var
   X: Integer;
-  First, Second: TButton;
+  First: TButton;
 begin
-  AddSection(FAdvancedPanel, AY, 'Поведение');
-  FSoundRU := AddToggle(FAdvancedPanel, AY, 'Звук при вводе в русской раскладке');
-  FSelectionLayout := AddToggle(FAdvancedPanel, AY,
-    'Менять раскладку после конвертации выделения');
-  FPauseFullscreen := AddToggle(FAdvancedPanel, AY,
-    'Не вмешиваться в полноэкранных приложениях');
-  FHintFlash := AddToggle(FAdvancedPanel, AY, 'Вспышка подсказки при появлении');
-  FHintAnimate := AddToggle(FAdvancedPanel, AY, 'Анимация размера подсказки');
-
-  AddSection(FAdvancedPanel, AY, 'Слова и приложения');
   X := S(PageMargin);
-  First := AddButton(FAdvancedPanel, 'Список обучения', X, AY, LearningListClick);
-  Second := AddButton(FAdvancedPanel, 'Исключения', First.BoundsRect.Right + S(8),
-    AY, ExclusionsClick);
-  AddButton(FAdvancedPanel, 'Правила приложений', Second.BoundsRect.Right + S(8),
-    AY, RulesClick);
-  Inc(AY, S(38));
-  AddButton(FAdvancedPanel, 'Сбросить обучение', X, AY, ResetLearningClick);
-  Inc(AY, S(38));
+  AddSection(ALeft, ALeftY, 'Поведение');
+  FSoundRU := AddToggle(ALeft, ALeftY, 'Звук при вводе в русской раскладке');
+  FSelectionLayout := AddToggle(ALeft, ALeftY,
+    'Менять раскладку после конвертации выделения');
+  FPauseFullscreen := AddToggle(ALeft, ALeftY,
+    'Не вмешиваться в полноэкранных приложениях');
+  FHintFlash := AddToggle(ALeft, ALeftY, 'Вспышка подсказки при появлении');
+  FHintAnimate := AddToggle(ALeft, ALeftY, 'Анимация размера подсказки');
+  Inc(ALeftY, S(8));
 
-  AddSection(FAdvancedPanel, AY, 'Диагностика');
-  FDiagnostics := AddCombo(FAdvancedPanel, AY, 'Журнал',
+  AddSection(ARight, ARightY, 'Слова и приложения');
+  First := AddButton(ARight, 'Список обучения', X, ARightY, LearningListClick);
+  AddButton(ARight, 'Исключения', First.BoundsRect.Right + S(8), ARightY,
+    ExclusionsClick);
+  Inc(ARightY, S(38));
+  First := AddButton(ARight, 'Правила приложений', X, ARightY, RulesClick);
+  AddButton(ARight, 'Сбросить обучение', First.BoundsRect.Right + S(8),
+    ARightY, ResetLearningClick);
+  Inc(ARightY, S(38));
+
+  AddSection(ARight, ARightY, 'Диагностика');
+  FDiagnostics := AddCombo(ARight, ARightY, 'Журнал',
     ['Выключен', 'Ошибки', 'Информация', 'Подробно']);
-  First := AddButton(FAdvancedPanel, 'Открыть журнал', X, AY, OpenLogClick);
-  AddButton(FAdvancedPanel, 'Очистить журнал', First.BoundsRect.Right + S(8),
-    AY, ResetDiagnosticsClick);
-  Inc(AY, S(38));
-  AddButton(FAdvancedPanel, 'Открыть config.json', X, AY, OpenConfigClick);
-  Inc(AY, S(44));
+  First := AddButton(ARight, 'Открыть журнал', X, ARightY, OpenLogClick);
+  AddButton(ARight, 'Очистить журнал', First.BoundsRect.Right + S(8),
+    ARightY, ResetDiagnosticsClick);
+  Inc(ARightY, S(38));
+  AddButton(ARight, 'Открыть config.json', X, ARightY, OpenConfigClick);
+  Inc(ARightY, S(44));
 end;
 
 constructor TfrmSettings.Create(AOwner: TComponent);
 var
-  Y, W: Integer;
+  Y, W, LeftY, RightY: Integer;
+  Version: string;
+  VersionLabel: TLabel;
+  LeftColumn, RightColumn: TPanel;
   OkButton, CancelButton: TButton;
 begin
   inherited CreateNew(AOwner);
@@ -1036,7 +1076,7 @@ begin
   Font.Name := 'Segoe UI';
   Font.Size := 9;
   Color := clWindow;
-  ClientWidth := S(500);
+  ClientWidth := Min(S(940), Screen.WorkAreaWidth - S(40));
   ClientHeight := S(400);
   OnMouseWheel := WheelScroll;
   KeyPreview := True;
@@ -1065,8 +1105,16 @@ begin
   FMainPanel.ParentBackground := False;
   FMainPanel.Color := clWindow;
   FMainPanel.SetBounds(0, 0, W, S(100));
-  Y := 0;
-  BuildMain(Y);
+  LeftY := 0;
+  RightY := 0;
+  LeftColumn := AddColumn(FMainPanel, 0, W div 2);
+  RightColumn := AddColumn(FMainPanel, W div 2, W - W div 2);
+  BuildMain(LeftColumn, RightColumn, LeftY, RightY);
+  // A column is a window and hides whatever lies under it, so it ends where
+  // its rows end and leaves the row below it visible.
+  LeftColumn.Height := LeftY;
+  RightColumn.Height := RightY;
+  Y := Max(LeftY, RightY);
 
   FSpoiler := TLabel.Create(Self);
   FSpoiler.Parent := FMainPanel;
@@ -1086,10 +1134,26 @@ begin
   FAdvancedPanel.ParentBackground := False;
   FAdvancedPanel.Color := clWindow;
   FAdvancedPanel.SetBounds(0, FMainPanel.Height, W, S(100));
-  Y := 0;
-  BuildAdvanced(Y);
-  FAdvancedPanel.Height := Y;
+  LeftY := 0;
+  RightY := 0;
+  LeftColumn := AddColumn(FAdvancedPanel, 0, W div 2);
+  RightColumn := AddColumn(FAdvancedPanel, W div 2, W - W div 2);
+  BuildAdvanced(LeftColumn, RightColumn, LeftY, RightY);
+  LeftColumn.Height := LeftY;
+  RightColumn.Height := RightY;
+  FAdvancedPanel.Height := Max(LeftY, RightY);
   FAdvancedPanel.Visible := False;
+
+  Version := AppVersionString;
+  if Version <> '' then
+  begin
+    VersionLabel := TLabel.Create(Self);
+    VersionLabel.Parent := FBar;
+    VersionLabel.Caption := 'Версия ' + Version;
+    VersionLabel.Font.Color := clGrayText;
+    VersionLabel.Left := S(PageMargin);
+    VersionLabel.Top := (S(ButtonBarHeight) - VersionLabel.Height) div 2;
+  end;
 
   CancelButton := TButton.Create(Self);
   CancelButton.Parent := FBar;
@@ -1177,6 +1241,12 @@ begin
   SetOn(FAutoStart, AppSettings.AutoStart);
   SetOn(FFixCaps, AppSettings.FixInitialCaps);
   SetOn(FFixCapsLock, AppSettings.FixCapsLock);
+  SetOn(FFixSpacing, AppSettings.FixPunctuationSpacing);
+  SetOn(FFixTypos, AppSettings.FixLetterTypos);
+  SetOn(FCapSentences, AppSettings.CapitalizeSentences);
+  SetOn(FDash, AppSettings.TypographicDash);
+  SetOn(FQuotes, AppSettings.TypographicQuotes);
+  SetOn(FRepeated, AppSettings.RemoveRepeatedWords);
   SetOn(FPauseFullscreen, AppSettings.PauseInFullscreen);
   SetOn(FEnglishSecure, AppSettings.EnglishInSecureFields);
   SetOn(FDoubleCtrl, AppSettings.DoubleCtrlEnabled);
@@ -1201,6 +1271,12 @@ begin
   AppSettings.AutoStart := FAutoStart.Checked;
   AppSettings.FixInitialCaps := FFixCaps.Checked;
   AppSettings.FixCapsLock := FFixCapsLock.Checked;
+  AppSettings.FixPunctuationSpacing := FFixSpacing.Checked;
+  AppSettings.FixLetterTypos := FFixTypos.Checked;
+  AppSettings.CapitalizeSentences := FCapSentences.Checked;
+  AppSettings.TypographicDash := FDash.Checked;
+  AppSettings.TypographicQuotes := FQuotes.Checked;
+  AppSettings.RemoveRepeatedWords := FRepeated.Checked;
   AppSettings.PauseInFullscreen := FPauseFullscreen.Checked;
   AppSettings.EnglishInSecureFields := FEnglishSecure.Checked;
   AppSettings.DoubleCtrlEnabled := FDoubleCtrl.Checked;

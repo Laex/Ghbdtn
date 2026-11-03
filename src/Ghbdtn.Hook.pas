@@ -81,6 +81,7 @@ type
     FCaseFixShown: string;
     FCaseFixTrailingVK: Word;
     FCaseFixTick: UInt64;
+    FCaseFixLearn: string;
     FIgnoredTapTick: UInt64;
     FLineText: string;
     FEarlyActive: Boolean;
@@ -126,6 +127,10 @@ type
     function TryUndoCaseFix(out AItem: TInputWorkItem): Boolean;
     function TryQueueCaseFix(const AWord: string; APunctuation: Char;
       AVKCode: DWORD; AQuestionArmed: Boolean): Boolean;
+    function ActiveLineFixes(AVKCode: DWORD; APunctuation: Char): TLineFixes;
+    function ConsumeRedundantSpace(AVKCode: DWORD; APunctuation: Char): Boolean;
+    function TryQueueTailFix(AVKCode: DWORD; APunctuation: Char;
+      ABeforeWordCheck: Boolean): Boolean;
     procedure HandleLeftShiftEvent(AIsKeyDown, AIsKeyUp: Boolean);
     procedure HandleRightShiftEvent(AIsKeyDown, AIsKeyUp: Boolean);
     procedure HandleDoubleRightShift;
@@ -405,20 +410,22 @@ begin
   FCaseFixShown := '';
   FCaseFixTrailingVK := 0;
   FCaseFixTick := 0;
+  FCaseFixLearn := '';
 end;
 
 procedure TKbdHookManager.RejectCaseFix;
 var
   Item: TInputWorkItem;
 begin
-  if (FCaseFixOriginal = '') or
+  if (FCaseFixOriginal = '') or (FCaseFixLearn = '') or
      not IsWithinLearningWindow(FCaseFixTick, GetTickCount64,
        LearningUndoWindowMs) then
   begin
+    // A taken-back fix without a word of its own teaches nothing.
     ClearCaseFix;
     Exit;
   end;
-  AppSettings.KeepCaseFixWord(FCaseFixOriginal);
+  AppSettings.KeepCaseFixWord(FCaseFixLearn);
   ClearCaseFix;
   FillChar(Item, SizeOf(Item), 0);
   Item.Kind := iwPersistSettings;
@@ -478,6 +485,7 @@ begin
   Item.ToggleCapsLock := FromCapsLock;
   LineReplaceTail(Length(AWord), Fixed);
   FCaseFixOriginal := AWord;
+  FCaseFixLearn := AWord;
   FCaseFixTick := GetTickCount64;
   if APunctuation <> #0 then
   begin
@@ -492,6 +500,100 @@ begin
     FCaseFixShown := Fixed;
     FCaseFixTrailingVK := Word(AVKCode);
   end;
+  EnqueueWork(Item);
+  Result := True;
+end;
+
+{ The line fixes the settings and the application allow for this key; none
+  unless it is a space, Enter or Tab that ends a word. }
+function TKbdHookManager.ActiveLineFixes(AVKCode: DWORD;
+  APunctuation: Char): TLineFixes;
+begin
+  Result := [];
+  if (APunctuation <> #0) or not (AVKCode in [VK_SPACE, VK_RETURN, VK_TAB]) or
+     FGloballyPaused or not CurrentProfile.AutoSwitchEnabled then
+    Exit;
+  if AppSettings.FixPunctuationSpacing then
+    Include(Result, lfSpacing);
+  if AppSettings.FixLetterTypos then
+    Include(Result, lfLetterTypos);
+  if AppSettings.CapitalizeSentences then
+    Include(Result, lfSentenceCapital);
+  if AppSettings.TypographicDash then
+    Include(Result, lfDash);
+  if AppSettings.TypographicQuotes then
+    Include(Result, lfQuotes);
+  if AppSettings.RemoveRepeatedWords then
+    Include(Result, lfRepeatedWord);
+end;
+
+{ A second space typed after a space that follows text is swallowed. }
+function TKbdHookManager.ConsumeRedundantSpace(AVKCode: DWORD;
+  APunctuation: Char): Boolean;
+begin
+  Result := (AVKCode = VK_SPACE) and FInputBuffer.IsEmpty and
+    IsRedundantSpace(FLineText) and
+    (lfSpacing in ActiveLineFixes(AVKCode, APunctuation));
+  if Result then
+    FConsumedDelimiterVK := Word(AVKCode);
+end;
+
+{ The end of the typed line is corrected when the key that ends the word
+  arrives: the tail is erased, typed again and the ending key follows it. A
+  mark still in the input buffer (a letter key of the other layout) is not a
+  word; any other buffered text is left to the layout check, which asks again
+  once it has decided not to switch. A double Left Shift or Ctrl+Z puts the
+  old text back. }
+function TKbdHookManager.TryQueueTailFix(AVKCode: DWORD; APunctuation: Char;
+  ABeforeWordCheck: Boolean): Boolean;
+var
+  Fixes: TLineFixes;
+  Delimiter: Char;
+  Old: Integer;
+  NewText, Learn: string;
+  Item: TInputWorkItem;
+  Kept: TNeverSwitchCallback;
+begin
+  Result := False;
+  Fixes := ActiveLineFixes(AVKCode, APunctuation);
+  if (Fixes = []) or FEarlyActive or (FLineText = '') then
+    Exit;
+  if ABeforeWordCheck and not FInputBuffer.IsEmpty and
+     not ((FInputBuffer.BufferLength = 1) and
+          not FInputBuffer.BufferText[1].IsLetterOrDigit and
+          (FInputBuffer.BufferText[1] = FLineText[Length(FLineText)])) then
+    Exit;
+  case AVKCode of
+    VK_RETURN: Delimiter := #13;
+    VK_TAB: Delimiter := #9;
+  else
+    Delimiter := ' ';
+  end;
+  Kept :=
+    function(const AWord: string): Boolean
+    begin
+      Result := AppSettings.IsCaseFixKept(AWord);
+    end;
+  if not TryFixLineTail(FLineText, Delimiter, Fixes, Kept, Old, NewText,
+       Learn) or (Old > Length(FLineText)) then
+    Exit;
+  FillChar(Item, SizeOf(Item), 0);
+  Item.Kind := iwReplaceWord;
+  Item.TargetWindow := GetForegroundWindow;
+  Item.OldWordLength := Old;
+  Item.NewText := NewText;
+  Item.TrailingKey := Word(AVKCode);
+  Item.KeepLayout := True;
+  ClearLastCase;
+  ClearLastConversion;
+  FCaseFixOriginal := Copy(FLineText, Length(FLineText) - Old + 1, Old);
+  LineReplaceTail(Old, NewText);
+  FCaseFixShown := NewText;
+  FCaseFixTrailingVK := Word(AVKCode);
+  FCaseFixTick := GetTickCount64;
+  FCaseFixLearn := Learn;
+  FInputBuffer.Clear;
+  FBackspaceRun := 0;
   EnqueueWork(Item);
   Result := True;
 end;
@@ -1813,6 +1915,9 @@ begin
         Result := True
       else if ((ALang <> lkEN) or not CharInSet(APunctuation, ['?', '/'])) and
          TryQueueCaseFix(MarkerText, APunctuation, VKCode, QuestionArmed) then
+        Result := True
+      else if not QuestionArmed and
+         TryQueueTailFix(VKCode, APunctuation, False) then
         Result := True;
     end;
   end
@@ -1828,7 +1933,12 @@ end;
 function TKbdHookManager.HandleWordDelimiter(ALang: TLangKind;
   VKCode: DWORD; APunctuation: Char): Boolean;
 begin
-  Result := HandleWordDelimiterCore(ALang, VKCode, APunctuation);
+  if ConsumeRedundantSpace(VKCode, APunctuation) then
+    Exit(True);
+  if TryQueueTailFix(VKCode, APunctuation, True) then
+    Result := True
+  else
+    Result := HandleWordDelimiterCore(ALang, VKCode, APunctuation);
   ClearEarlySwitch;
   NoteLineDelimiter(VKCode, APunctuation);
 end;
