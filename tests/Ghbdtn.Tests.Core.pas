@@ -227,6 +227,10 @@ type
     [Test]
     procedure ConvertsRussianWordsInsideEdgeKeysOfPunctuation;
     [Test]
+    procedure KeepsRussianLettersOnMarkKeysAtWordEdges;
+    [Test]
+    procedure ListedWordAgainstUnlistedTextNeedsLessEvidence;
+    [Test]
     procedure ShortWordWithLetterKeyAtTheEdgeIsNotAFunctionWord;
     [Test]
     procedure KeepsEnglishWordsWithPunctuationAroundThem;
@@ -860,6 +864,9 @@ begin
   Assert.IsFalse(TryRussianTrailingPunctuation('приветх', Mark), 'приветх');
   Assert.IsFalse(TryRussianTrailingPunctuation('об', Mark), 'об');
   Assert.IsFalse(TryRussianTrailingPunctuation('hello,', Mark), 'hello,');
+  Assert.IsFalse(TryRussianTrailingPunctuation('краю', Mark), 'краю');
+  Assert.IsFalse(TryRussianTrailingPunctuation('академию', Mark), 'академию');
+  Assert.IsFalse(TryRussianTrailingPunctuation('видимую', Mark), 'видимую');
 end;
 
 procedure TAnalyzerTests.ConvertsWordsWithLettersOnPunctuationKeys;
@@ -938,6 +945,52 @@ begin
   AssertConverts('ghbdtn]', 'привет]');
   AssertConverts('(ghbdtn)', '(привет)');
   AssertConverts('Ghbdtn,', 'Привет,');
+end;
+
+procedure TAnalyzerTests.KeepsRussianLettersOnMarkKeysAtWordEdges;
+
+  procedure AssertConverts(const ATyped, AExpected: string);
+  var
+    Analysis: TAnalysisResult;
+  begin
+    Analysis := AnalyzeWord(ATyped, lkEN);
+    Assert.IsTrue(Analysis.NeedsSwitch, ATyped);
+    Assert.AreEqual(AExpected, Analysis.ConvertedText, ATyped);
+  end;
+
+begin
+  // A comma or a period does not open a word, so "б" and "ю" there are
+  // letters.
+  AssertConverts(',.l;tnt', 'бюджете');
+  AssertConverts(',jcnjy', 'бостон');
+  AssertConverts(',ktcrf', 'блеска');
+  // An opening bracket does not close a word, so the last key is "х".
+  AssertConverts('dfhbfynf[', 'вариантах');
+  AssertConverts('ghj,ktvf[', 'проблемах');
+  // A word that ends with "ю" and is not in the word list keeps it.
+  AssertConverts('frfltvb.', 'академию');
+  AssertConverts('rhf.', 'краю');
+  AssertConverts('dblbve.', 'видимую');
+end;
+
+procedure TAnalyzerTests.ListedWordAgainstUnlistedTextNeedsLessEvidence;
+var
+  Analysis: TAnalysisResult;
+begin
+  // Three letters give little evidence, but the Russian reading is a
+  // frequent word and the typed text is no English word.
+  Analysis := AnalyzeWord('ult', lkEN);
+  Assert.IsTrue(Analysis.NeedsSwitch, 'ult');
+  Assert.AreEqual('где', Analysis.ConvertedText);
+  Analysis := AnalyzeWord('cif', lkEN);
+  Assert.IsTrue(Analysis.NeedsSwitch, 'cif');
+  Assert.AreEqual('сша', Analysis.ConvertedText);
+  Analysis := AnalyzeWord('сге', lkRU);
+  Assert.IsTrue(Analysis.NeedsSwitch, 'сге');
+  Assert.AreEqual('cut', Analysis.ConvertedText);
+  // Typed text that is a word of its own language keeps the full margin.
+  Assert.IsFalse(AnalyzeWord('tot', lkEN).NeedsSwitch, 'tot');
+  Assert.IsFalse(AnalyzeWord('рук', lkRU).NeedsSwitch, 'рук');
 end;
 
 procedure TAnalyzerTests.ShortWordWithLetterKeyAtTheEdgeIsNotAFunctionWord;
@@ -1110,14 +1163,14 @@ var
   Analysis: TAnalysisResult;
   Phrase: TPhraseContext;
 begin
-  Analysis := AnalyzeWord('celf', lkEN);
+  Analysis := AnalyzeWord('byst', lkEN);
   Assert.IsFalse(Analysis.NeedsSwitch);
   Phrase := PhraseOf([lkRU, lkRU]);
-  Analysis := AnalyzeWord('celf', lkEN, hmBalanced, nil, nil, Phrase);
+  Analysis := AnalyzeWord('byst', lkEN, hmBalanced, nil, nil, Phrase);
   Assert.IsTrue(Analysis.NeedsSwitch);
-  Assert.AreEqual('суда', Analysis.ConvertedText);
+  Assert.AreEqual('иные', Analysis.ConvertedText);
   Phrase := PhraseOf([lkRU, lkRU, lkRU]);
-  Analysis := AnalyzeWord('celf', lkEN, hmCautious, nil, nil, Phrase);
+  Analysis := AnalyzeWord('byst', lkEN, hmCautious, nil, nil, Phrase);
   Assert.IsFalse(Analysis.NeedsSwitch);
 end;
 

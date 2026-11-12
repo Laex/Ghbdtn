@@ -132,6 +132,10 @@ const
   CautiousExtraMargin = 12;
   AggressiveLessMargin = 8;
   UnknownLayoutMargin = 36;
+  // How much less evidence is needed when the other layout's reading is a
+  // word of the frequency list and the typed text is not one: short frequent
+  // words ("ult" is "где") have too few letters to clear the full margin.
+  ListedWordLessMargin = 8;
   // The costliest letter of a text that still reads as a word of its
   // language, with the word end counted as a letter.
   PlausibleRussianLetterCost = 24;
@@ -675,7 +679,11 @@ begin
   if AManual then
     Margin := ManualSwitchMargin
   else
+  begin
     Margin := SwitchMargin(AMode, ACurrentLang <> lkUnknown);
+    if Other.Listed and not Typed.Listed then
+      Dec(Margin, ListedWordLessMargin);
+  end;
   if Delta >= Margin then
   begin
     Result.NeedsSwitch := True;

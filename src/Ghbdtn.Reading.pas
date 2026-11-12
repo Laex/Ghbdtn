@@ -68,6 +68,11 @@ const
   // are a very frequent English word ("to`" is "ещё", and "to" costs 24).
   CommaPunctuationCost = 16;
   KeyPunctuationCost = 48;
+  // What it costs the Russian reading to treat a final "," or "." key as the
+  // mark of the English layout. Typed after a Russian word that key is far
+  // more often the letter "б" or "ю", and a common ending such as "-ию" or
+  // "-ую" must not lose to a shorter stem followed by a mark.
+  RussianCommaPunctuationCost = 40;
 
 function ReadWord(const AWord: string; ALang: TLangKind): TReading;
 var
@@ -95,6 +100,29 @@ begin
     Result := KeyPunctuationCost;
 end;
 
+function RussianPunctuationCost(AChar: Char): Integer;
+begin
+  if (AChar = ',') or (AChar = '.') then
+    Result := RussianCommaPunctuationCost
+  else
+    Result := KeyPunctuationCost;
+end;
+
+{ A key the Russian reading may give up before a word: an opening bracket or
+  a quote. A comma or a period there is the letter "б" or "ю". }
+function OpensWord(AChar: Char): Boolean;
+begin
+  Result := CharInSet(AChar, ['[', '{', '<', '''', '"', '`', '~']);
+end;
+
+{ A key the Russian reading may give up after a word: a sentence mark, a
+  closing bracket or a quote. An opening bracket there is the letter "х". }
+function ClosesWord(AChar: Char): Boolean;
+begin
+  Result := CharInSet(AChar, [',', '.', ';', ':', ']', '}', '>', '''', '"',
+    '`', '~']);
+end;
+
 function ReadAsRussian(const ALower: string): TReading;
 begin
   Result := ReadWord(ALower, lkRU);
@@ -105,6 +133,7 @@ function ReadAsRussianKeepingEdges(const ATypedLower: string;
 var
   First, Last, Start, Stop, I, Trimmed: Integer;
   Candidate: TReading;
+  Fits: Boolean;
 begin
   AStart := 1;
   AStop := Length(ATypedLower);
@@ -122,13 +151,22 @@ begin
     begin
       if (Start = 1) and (Stop = Length(ATypedLower)) then
         Continue;
-      Candidate := ReadAsRussian(ConvertStringSwap(
-        Copy(ATypedLower, Start, Stop - Start + 1)).ToLower);
+      Fits := True;
       Trimmed := 0;
       for I := 1 to Start - 1 do
-        Inc(Trimmed, PunctuationCost(ATypedLower[I]));
+      begin
+        Fits := Fits and OpensWord(ATypedLower[I]);
+        Inc(Trimmed, RussianPunctuationCost(ATypedLower[I]));
+      end;
       for I := Stop + 1 to Length(ATypedLower) do
-        Inc(Trimmed, PunctuationCost(ATypedLower[I]));
+      begin
+        Fits := Fits and ClosesWord(ATypedLower[I]);
+        Inc(Trimmed, RussianPunctuationCost(ATypedLower[I]));
+      end;
+      if not Fits then
+        Continue;
+      Candidate := ReadAsRussian(ConvertStringSwap(
+        Copy(ATypedLower, Start, Stop - Start + 1)).ToLower);
       Inc(Candidate.Cost, Trimmed);
       if Candidate.Cost < Result.Cost then
       begin
@@ -176,7 +214,7 @@ begin
   if Whole.Listed then
     Exit;
   Stem := Copy(AWord, 1, Length(AWord) - 1);
-  Result := ReadAsRussian(Stem.ToLower).Cost + PunctuationCost(APunct) <
+  Result := ReadAsRussian(Stem.ToLower).Cost + RussianPunctuationCost(APunct) <
     Whole.Cost;
 end;
 
