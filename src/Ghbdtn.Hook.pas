@@ -84,6 +84,9 @@ type
     FCaseFixLearn: string;
     FIgnoredTapTick: UInt64;
     FLineText: string;
+    // The mark the last word delimiter left in the text when it differs from
+    // the key pressed ("?" typed on the English layout is "," once switched).
+    FDelimiterAsTyped: Char;
     FEarlyActive: Boolean;
     FEarlyBlocked: Boolean;
     FEarlyLang: TLangKind;
@@ -1881,7 +1884,10 @@ begin
         // "?" and "/" on the English layout are the Russian "," and ".".
         if (Analysis.TargetLang = lkRU) and (ALang = lkEN) and
            CharInSet(APunctuation, ['?', '/']) then
-          Item.NewText := Item.NewText + ConvertCharSwap(APunctuation)
+        begin
+          Item.NewText := Item.NewText + ConvertCharSwap(APunctuation);
+          FDelimiterAsTyped := ConvertCharSwap(APunctuation);
+        end
         else
           Item.NewText := Item.NewText + APunctuation;
         FConsumedDelimiterVK := Word(VKCode);
@@ -1952,7 +1958,13 @@ begin
   else
     Result := HandleWordDelimiterCore(ALang, VKCode, APunctuation);
   ClearEarlySwitch;
-  NoteLineDelimiter(VKCode, APunctuation);
+  if FDelimiterAsTyped <> #0 then
+  begin
+    NoteLineDelimiter(VKCode, FDelimiterAsTyped);
+    FDelimiterAsTyped := #0;
+  end
+  else
+    NoteLineDelimiter(VKCode, APunctuation);
 end;
 
 { The short word typed on the English layout right before the word being
