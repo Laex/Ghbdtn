@@ -51,6 +51,11 @@ function AnalyzeWordPrefix(const APrefix: string; ACurrentLang: TLangKind;
   left alone by itself, but it belongs to the words after it. }
 function TryPrecedingShortWord(const ALine: string; AWordLength: Integer;
   out AWord: string): Boolean;
+{ Like TryPrecedingShortWord, for a short word closed by "?" and a space before
+  the word being switched ("Ye? gjrf": "Ye?" is "Ну,"). The "?" key is the
+  Russian comma. }
+function TryShortWordBeforeQuestion(const ALine: string; AWordLength: Integer;
+  out AWord: string): Boolean;
 { APhrase holds the words before the one just typed on the Russian layout and
   ends with a short word left on the English layout. That word is Russian
   when it starts the phrase or follows Russian words ("b" is "и"); after an
@@ -752,32 +757,56 @@ begin
   end;
 end;
 
+function ShortWordEndingAt(const AHead: string; AWordEnd: Integer;
+  out AWord: string): Boolean;
+var
+  I: Integer;
+begin
+  Result := False;
+  AWord := '';
+  if AWordEnd < 1 then
+    Exit;
+  I := AWordEnd;
+  while (I >= 1) and CharInSet(AHead[I], ['a'..'z', 'A'..'Z']) do
+    Dec(I);
+  if (AWordEnd - I < 1) or (AWordEnd - I > 2) then
+    Exit;
+  if (I >= 1) and not CharInSet(AHead[I], [' ', #9, #10, #13, ',', ';', ':',
+    '!', '?', '(', '"']) then
+    Exit;
+  AWord := Copy(AHead, I + 1, AWordEnd - I);
+  Result := IsRussianFunctionWord(ConvertStringSwap(AWord).ToLower);
+  if not Result then
+    AWord := '';
+end;
+
 function TryPrecedingShortWord(const ALine: string; AWordLength: Integer;
   out AWord: string): Boolean;
 var
   Head: string;
-  WordEnd, I: Integer;
 begin
-  Result := False;
   AWord := '';
   if (AWordLength <= 0) or (AWordLength >= Length(ALine)) then
-    Exit;
+    Exit(False);
   Head := Copy(ALine, 1, Length(ALine) - AWordLength);
-  WordEnd := Length(Head) - 1;
-  if (WordEnd < 1) or (Head[Length(Head)] <> ' ') then
-    Exit;
-  I := WordEnd;
-  while (I >= 1) and CharInSet(Head[I], ['a'..'z', 'A'..'Z']) do
-    Dec(I);
-  if (WordEnd - I < 1) or (WordEnd - I > 2) then
-    Exit;
-  if (I >= 1) and not CharInSet(Head[I], [' ', #9, #10, #13, ',', ';', ':',
-    '!', '?', '(', '"']) then
-    Exit;
-  AWord := Copy(Head, I + 1, WordEnd - I);
-  Result := IsRussianFunctionWord(ConvertStringSwap(AWord).ToLower);
-  if not Result then
-    AWord := '';
+  if (Length(Head) < 2) or (Head[Length(Head)] <> ' ') then
+    Exit(False);
+  Result := ShortWordEndingAt(Head, Length(Head) - 1, AWord);
+end;
+
+function TryShortWordBeforeQuestion(const ALine: string; AWordLength: Integer;
+  out AWord: string): Boolean;
+var
+  Head: string;
+begin
+  AWord := '';
+  if (AWordLength <= 0) or (AWordLength >= Length(ALine)) then
+    Exit(False);
+  Head := Copy(ALine, 1, Length(ALine) - AWordLength);
+  if (Length(Head) < 3) or (Head[Length(Head)] <> ' ') or
+     (Head[Length(Head) - 1] <> '?') then
+    Exit(False);
+  Result := ShortWordEndingAt(Head, Length(Head) - 2, AWord);
 end;
 
 function ShortWordStartsRussianPhrase(const APhrase: TPhraseContext): Boolean;

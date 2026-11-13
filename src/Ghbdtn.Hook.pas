@@ -1855,6 +1855,18 @@ begin
       begin
         Item.OldWordLength := Item.OldWordLength + 2;
         Item.NewText := ', ' + Analysis.ConvertedText;
+        // "Ye? gjrf" -> "Ну, пока": the short word before "?" is Russian too.
+        if (Analysis.TargetLang = lkRU) and
+           TryShortWordBeforeQuestion(FLineText, Length(MarkerText), ShortPrefix) and
+           not AppSettings.IsNeverSwitchWord(ShortPrefix.ToLower, LearningProcessName) then
+        begin
+          Item.OldWordLength := Item.OldWordLength + Length(ShortPrefix);
+          ShortExtra := Length(ShortPrefix) + 2;
+          ShortPrefix := ConvertStringSwap(ShortPrefix) + ', ';
+          Item.NewText := ShortPrefix + Analysis.ConvertedText;
+        end
+        else
+          ShortPrefix := '';
       end
       else if (Analysis.TargetLang = lkRU) and
         TryShortWordBefore(Length(MarkerText), ShortExtra, ShortPrefix) then

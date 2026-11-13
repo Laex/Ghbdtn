@@ -161,6 +161,8 @@ type
     [Test]
     procedure FindsShortWordBeforeConvertedWord;
     [Test]
+    procedure FindsShortWordBeforeQuestionMark;
+    [Test]
     procedure IgnoresPrecedingWordThatIsNotAShortFunctionWord;
     [Test]
     procedure ShortWordJoinsRussianWordOnlyOutsideEnglishText;
@@ -1291,6 +1293,21 @@ begin
   Assert.AreEqual('Yt', Prev);
   Assert.IsTrue(TryPrecedingShortWord('text (d yfxfkt', 6, Prev));
   Assert.AreEqual('d', Prev);
+end;
+
+procedure TAnalyzerTests.FindsShortWordBeforeQuestionMark;
+var
+  Prev: string;
+begin
+  Assert.IsTrue(TryShortWordBeforeQuestion('Ye? gjrf', 4, Prev));
+  Assert.AreEqual('Ye', Prev);
+  Assert.IsTrue(TryShortWordBeforeQuestion('привет, Yt? gjrf', 4, Prev));
+  Assert.AreEqual('Yt', Prev);
+  // Not a function word, no "?", or a longer word.
+  Assert.IsFalse(TryShortWordBeforeQuestion('hello? gjrf', 4, Prev));
+  Assert.IsFalse(TryShortWordBeforeQuestion('Ye gjrf', 4, Prev));
+  Assert.IsFalse(TryShortWordBeforeQuestion('Ye,  gjrf', 4, Prev));
+  Assert.IsFalse(TryShortWordBeforeQuestion('Yet? gjrf', 4, Prev));
 end;
 
 procedure TAnalyzerTests.ShortWordJoinsRussianWordOnlyOutsideEnglishText;
