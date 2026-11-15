@@ -233,6 +233,9 @@ begin
     Dec(Last);
   if First > Last then
     Exit;
+  // No edge keys: the whole text is the only candidate.
+  if (First = 1) and (Last = Length(ALower)) then
+    Exit(ReadWord(ALower, lkEN));
   // Start and Stop run over the edge keys: the text between them is read,
   // the keys outside are punctuation.
   for Start := 1 to First do

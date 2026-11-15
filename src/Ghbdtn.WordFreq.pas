@@ -19,6 +19,7 @@ implementation
 
 uses
   System.SysUtils,
+  System.Generics.Defaults,
   System.Generics.Collections;
 
 type
@@ -1054,6 +1055,8 @@ const
 var
   GEnglishWords: TDictionary<string, Integer>;
   GRussianWords: TDictionary<string, Integer>;
+  GEnglishSorted: TArray<string>;
+  GRussianSorted: TArray<string>;
 
 function LoadTiers(const ATiers: array of TWordTier): TDictionary<string, Integer>;
 var
@@ -1066,6 +1069,15 @@ begin
       Result.AddOrSetValue(Word, Tier.Cost);
 end;
 
+{ The list stores "ё" as "е"; most words have no "ё", so no copy is made. }
+function FoldYo(const AText: string): string;
+begin
+  if Pos('ё', AText) > 0 then
+    Result := AText.Replace('ё', 'е')
+  else
+    Result := AText;
+end;
+
 function WordCost(const ALower: string; ALang: TLangKind): Integer;
 begin
   if ALang = lkEN then
@@ -1073,34 +1085,49 @@ begin
     if not GEnglishWords.TryGetValue(ALower, Result) then
       Result := -1;
   end
-  else if not GRussianWords.TryGetValue(ALower.Replace('ё', 'е'), Result) then
+  else if not GRussianWords.TryGetValue(FoldYo(ALower), Result) then
     Result := -1;
 end;
 
-function HasWordWithPrefix(const ALower: string; ALang: TLangKind): Boolean;
+function SortedWords(ADict: TDictionary<string, Integer>): TArray<string>;
+begin
+  Result := ADict.Keys.ToArray;
+  TArray.Sort<string>(Result, TStringComparer.Ordinal);
+end;
+
+{ The words are sorted, so those that begin with APrefix are contiguous and
+  start at the first word not below it. }
+function SortedHasPrefix(const AWords: TArray<string>;
+  const APrefix: string): Boolean;
 var
-  Words: TDictionary<string, Integer>;
-  Prefix, Word: string;
+  Low, High, Mid: Integer;
+begin
+  Low := 0;
+  High := Length(AWords);
+  while Low < High do
+  begin
+    Mid := (Low + High) div 2;
+    if CompareStr(AWords[Mid], APrefix) < 0 then
+      Low := Mid + 1
+    else
+      High := Mid;
+  end;
+  Result := (Low < Length(AWords)) and AWords[Low].StartsWith(APrefix);
+end;
+
+function HasWordWithPrefix(const ALower: string; ALang: TLangKind): Boolean;
 begin
   if ALang = lkEN then
-  begin
-    Words := GEnglishWords;
-    Prefix := ALower;
-  end
+    Result := SortedHasPrefix(GEnglishSorted, ALower)
   else
-  begin
-    Words := GRussianWords;
-    Prefix := ALower.Replace('ё', 'е');
-  end;
-  for Word in Words.Keys do
-    if Word.StartsWith(Prefix) then
-      Exit(True);
-  Result := False;
+    Result := SortedHasPrefix(GRussianSorted, FoldYo(ALower));
 end;
 
 initialization
   GEnglishWords := LoadTiers(EnglishTiers);
   GRussianWords := LoadTiers(RussianTiers);
+  GEnglishSorted := SortedWords(GEnglishWords);
+  GRussianSorted := SortedWords(GRussianWords);
 
 finalization
   GEnglishWords.Free;

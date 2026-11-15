@@ -457,6 +457,42 @@ begin
      (Reading.PlainCost <= Plausible * (Length(AFixed) + 1))));
 end;
 
+{ "работюьв": a Russian word with a file extension typed on the Russian layout
+  ("ю" is the period). The stem has to be a listed word so that a Russian word
+  that merely ends in such letters is left alone; the extension is converted
+  and the stem stays Russian. }
+function TryGluedExtension(const AWord: string; out AFixed: string): Boolean;
+var
+  I, Len, ExtLen: Integer;
+  Stem, Tail: string;
+begin
+  Result := False;
+  AFixed := '';
+  Len := Length(AWord);
+  if Len < 6 then
+    Exit;
+  for I := 1 to Len do
+    if not IsCyrillicLetter(AWord[I]) then
+      Exit;
+  if ReadAsRussian(AWord.ToLower).Listed then
+    Exit;
+  for ExtLen := 2 to 4 do
+  begin
+    if Len - ExtLen - 1 < 3 then
+      Break;
+    Tail := Copy(AWord, Len - ExtLen, ExtLen + 1);
+    if (Tail[1] <> 'ю') or
+       not IsDottedExtension(ConvertStringSwap(Tail).ToLower) then
+      Continue;
+    Stem := Copy(AWord, 1, Len - ExtLen - 1);
+    if ReadAsRussian(Stem.ToLower).Listed then
+    begin
+      AFixed := Stem + ConvertStringSwap(Tail);
+      Exit(True);
+    end;
+  end;
+end;
+
 function AnalyzeWordCore(const AWord: string; ACurrentLang: TLangKind;
   AMode: THeuristicMode; const ANeverSwitch: TNeverSwitchCallback;
   const APreferSwitch: TPreferSwitchCallback;
@@ -585,6 +621,16 @@ begin
     Result.ConvertedText := ConvertStringSwap(AWord);
     TraceHeuristic(Head + ' reason=file_extension switch=1 target=EN converted=' +
       QuoteTrace(Result.ConvertedText.ToLower));
+    Exit;
+  end;
+  if (ACurrentLang <> lkEN) and TryGluedExtension(CleanW, MixedText) then
+  begin
+    Result.Mark := dmDictionary;
+    Result.NeedsSwitch := True;
+    Result.TargetLang := lkRU;
+    Result.ConvertedText := MixedText;
+    TraceHeuristic(Head + ' reason=glued_extension switch=1 target=RU converted=' +
+      QuoteTrace(MixedText.ToLower));
     Exit;
   end;
   // "вум" is "dev" typed on the Russian layout, and "ctrl" typed as it is

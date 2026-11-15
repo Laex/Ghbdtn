@@ -106,6 +106,8 @@ type
     [Test]
     procedure WordListKnowsFrequentWordsOfEachLanguage;
     [Test]
+    procedure PrefixLookupFindsOnlyBeginningsOfListedWords;
+    [Test]
     procedure ListedWordIsAsCheapAsItsListCost;
     [Test]
     procedure EnglishReadingMayGiveUpEdgeKeysAtAPrice;
@@ -208,6 +210,8 @@ type
     procedure RecognizesRepeatedSpace;
     [Test]
     procedure SwitchesFileExtensionTypedOnRussianLayout;
+    [Test]
+    procedure SwitchesExtensionGluedToRussianWord;
     [Test]
     procedure SwitchesTechnicalTermTypedOnRussianLayout;
     [Test]
@@ -783,6 +787,19 @@ begin
   Assert.IsTrue(WordCost('еж', lkRU) >= 0);
   Assert.AreEqual(WordCost('еж', lkRU), WordCost('ёж', lkRU));
   Assert.IsTrue(WordCost('эх', lkRU) >= 0);
+end;
+
+procedure TReadingTests.PrefixLookupFindsOnlyBeginningsOfListedWords;
+begin
+  Assert.IsTrue(HasWordWithPrefix('приве', lkRU));
+  Assert.IsTrue(HasWordWithPrefix('привет', lkRU));
+  Assert.IsTrue(HasWordWithPrefix('hel', lkEN));
+  Assert.IsTrue(HasWordWithPrefix('hello', lkEN));
+  Assert.IsTrue(HasWordWithPrefix('ёж', lkRU));
+  Assert.IsFalse(HasWordWithPrefix('ghbdtn', lkEN));
+  Assert.IsFalse(HasWordWithPrefix('привет', lkEN));
+  Assert.IsFalse(HasWordWithPrefix('приветтт', lkRU));
+  Assert.IsFalse(HasWordWithPrefix('zzzzq', lkEN));
 end;
 
 procedure TReadingTests.ListedWordIsAsCheapAsItsListCost;
@@ -1803,6 +1820,22 @@ begin
   // A Russian word that only starts with "ю" is not an extension.
   Assert.IsFalse(AnalyzeWord('юбилей', lkRU).NeedsSwitch);
   Assert.IsFalse(AnalyzeWord('юг', lkRU).NeedsSwitch);
+end;
+
+procedure TAnalyzerTests.SwitchesExtensionGluedToRussianWord;
+var
+  Analysis: TAnalysisResult;
+begin
+  Analysis := AnalyzeWord('работюьв', lkRU);
+  Assert.IsTrue(Analysis.NeedsSwitch);
+  Assert.AreEqual('работ.md', Analysis.ConvertedText);
+  Assert.AreEqual(Integer(lkRU), Integer(Analysis.TargetLang));
+  Assert.AreEqual('Работ.md', AnalyzeWord('Работюьв', lkRU).ConvertedText);
+  Assert.AreEqual('работа.pdf', AnalyzeWord('работаюзва', lkRU).ConvertedText);
+  // A stem too short or not a word, and a word that is listed as it is.
+  Assert.IsFalse(AnalyzeWord('мюзва', lkRU).NeedsSwitch);
+  Assert.IsFalse(AnalyzeWord('ждтюьв', lkRU).NeedsSwitch);
+  Assert.IsFalse(AnalyzeWord('работа', lkRU).NeedsSwitch);
 end;
 
 procedure TAnalyzerTests.ProtectsTechnicalTokensAndAbbreviations;
