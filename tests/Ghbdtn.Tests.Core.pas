@@ -141,6 +141,8 @@ type
     [Test]
     procedure ShortWordNeedsRussianWordsBeforeIt;
     [Test]
+    procedure PreferredRussianFunctionWordStaysAfterRussianWords;
+    [Test]
     procedure RussianContextSwitchesANearMiss;
     [Test]
     procedure EnglishContextKeepsABorderlineWord;
@@ -1164,6 +1166,31 @@ begin
   Assert.IsFalse(AnalyzeWord('hi', lkEN, hmBalanced, nil, nil, PhraseOf([lkRU])).NeedsSwitch);
   // A selection converted by hand has no tracked context.
   Assert.IsTrue(AnalyzeWord('vs', lkEN).NeedsSwitch);
+end;
+
+procedure TAnalyzerTests.PreferredRussianFunctionWordStaysAfterRussianWords;
+var
+  Preferred: TPreferSwitchCallback;
+begin
+  Preferred :=
+    function(const AWord: string): Boolean
+    begin
+      Result := True;
+    end;
+  // "в" between Russian words is the preposition, whatever was learned.
+  Assert.IsFalse(AnalyzeWord('в', lkRU, hmBalanced, nil, Preferred,
+    PhraseOf([lkRU])).NeedsSwitch);
+  // A single letter at the start of a phrase is left alone as well, while a
+  // selection converted by hand still follows the learned preference.
+  Assert.IsFalse(AnalyzeWord('в', lkRU, hmBalanced, nil, Preferred,
+    EmptyPhrase).NeedsSwitch);
+  Assert.IsFalse(AnalyzeWord('d', lkEN, hmBalanced, nil, Preferred,
+    EmptyPhrase).NeedsSwitch);
+  Assert.IsTrue(AnalyzeWord('в', lkRU, hmBalanced, nil, Preferred,
+    UntrackedPhrase).NeedsSwitch);
+  // Other words are not affected.
+  Assert.IsTrue(AnalyzeWord('руддщ', lkRU, hmBalanced, nil, Preferred,
+    PhraseOf([lkRU])).NeedsSwitch);
 end;
 
 procedure TAnalyzerTests.FrequentRussianWordTypedInEnglishSwitches;

@@ -566,7 +566,16 @@ begin
     Exit;
   end;
   SourceLayout := TypedLayout(AWord, ACurrentLang);
-  if Assigned(APreferSwitch) and APreferSwitch(LowerWord) then
+  // A learned preference does not turn a Russian preposition or conjunction
+  // typed among Russian words into English ("в" -> "d"). A single letter typed
+  // by itself in a tracked phrase is not switched by a preference either: it is
+  // as likely a Russian word ("в", "с", "к") as a Latin one, and the word that
+  // follows decides it.
+  if Assigned(APreferSwitch) and APreferSwitch(LowerWord) and
+     not (not AManual and not APhrase.Untracked and
+          (((SourceLayout = lkRU) and PhraseEndsWith(APhrase, lkRU) and
+            (Length(LowerWord) <= 2) and IsRussianFunctionWord(LowerWord)) or
+           (Length(LowerWord) = 1))) then
   begin
     Result.Mark := dmLearning;
     Result.NeedsSwitch := True;
