@@ -2563,6 +2563,9 @@ begin
     if FLeftShiftDown or ((GetAsyncKeyState(VK_SHIFT) and $8000) <> 0) or
        ((GetAsyncKeyState(VK_LSHIFT) and $8000) <> 0) then
     begin
+      // Shift+Insert pastes and Shift+arrows select: the tracked line no
+      // longer matches the text before the caret.
+      FLineText := '';
       FInputBuffer.Clear;
       ClearLastConversion;
       FBackspaceRun := 0;
