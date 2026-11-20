@@ -2220,8 +2220,9 @@ var
   Analysis: TAnalysisResult;
   Item: TInputWorkItem;
   NeverSwitch: TNeverSwitchCallback;
-  ProcessName, Typed, ShortPrefix: string;
+  ProcessName, Typed, ShortPrefix, ShortWord: string;
   I, ShortExtra: Integer;
+  QuestionFix: Boolean;
 begin
   Result := False;
   if FEarlyActive or FEarlyBlocked or FGloballyPaused or
@@ -2260,7 +2261,25 @@ begin
   Item.NewText := Analysis.ConvertedText;
   ShortExtra := 0;
   ShortPrefix := '';
-  if (Analysis.TargetLang = lkRU) and
+  QuestionFix := FQuestionFixPending and (Analysis.TargetLang = lkRU) and
+    LineEndsWithQuestionBefore(FLineText, Length(Typed));
+  FQuestionFixPending := False;
+  if QuestionFix then
+  begin
+    // "skill? xnj" -> "skill, что": the "?" typed on the English layout is
+    // the Russian "," once the next word turns out to be Russian.
+    ShortExtra := 2;
+    ShortPrefix := ', ';
+    if TryShortWordBeforeQuestion(FLineText, Length(Typed), ShortWord) and
+       not AppSettings.IsNeverSwitchWord(ShortWord.ToLower, LearningProcessName) then
+    begin
+      Inc(ShortExtra, Length(ShortWord));
+      ShortPrefix := ConvertStringSwap(ShortWord) + ', ';
+    end;
+    Inc(Item.OldWordLength, ShortExtra);
+    Item.NewText := ShortPrefix + Item.NewText;
+  end
+  else if (Analysis.TargetLang = lkRU) and
      TryShortWordBefore(Length(Typed), ShortExtra, ShortPrefix) then
   begin
     Inc(Item.OldWordLength, ShortExtra);

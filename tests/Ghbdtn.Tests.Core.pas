@@ -167,6 +167,8 @@ type
     [Test]
     procedure FindsShortWordBeforeQuestionMark;
     [Test]
+    procedure DetectsQuestionMarkBeforeWord;
+    [Test]
     procedure IgnoresPrecedingWordThatIsNotAShortFunctionWord;
     [Test]
     procedure ShortWordJoinsRussianWordOnlyOutsideEnglishText;
@@ -1352,6 +1354,17 @@ begin
   Assert.IsFalse(TryShortWordBeforeQuestion('Ye gjrf', 4, Prev));
   Assert.IsFalse(TryShortWordBeforeQuestion('Ye,  gjrf', 4, Prev));
   Assert.IsFalse(TryShortWordBeforeQuestion('Yet? gjrf', 4, Prev));
+end;
+
+procedure TAnalyzerTests.DetectsQuestionMarkBeforeWord;
+begin
+  Assert.IsTrue(LineEndsWithQuestionBefore('skill? xnj', 3));
+  Assert.IsTrue(LineEndsWithQuestionBefore('a b? xnj', 3));
+  Assert.IsFalse(LineEndsWithQuestionBefore('skill, xnj', 3));
+  Assert.IsFalse(LineEndsWithQuestionBefore('skill?xnj', 3));
+  Assert.IsFalse(LineEndsWithQuestionBefore('skill?  xnj', 3));
+  Assert.IsFalse(LineEndsWithQuestionBefore('xnj', 3));
+  Assert.IsFalse(LineEndsWithQuestionBefore('? xnj', 3));
 end;
 
 procedure TAnalyzerTests.ShortWordJoinsRussianWordOnlyOutsideEnglishText;

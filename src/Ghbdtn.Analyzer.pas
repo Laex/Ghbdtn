@@ -56,6 +56,9 @@ function TryPrecedingShortWord(const ALine: string; AWordLength: Integer;
   Russian comma. }
 function TryShortWordBeforeQuestion(const ALine: string; AWordLength: Integer;
   out AWord: string): Boolean;
+{ The word of AWordLength letters at the end of ALine is preceded by "? " ("skill? xnj"). }
+function LineEndsWithQuestionBefore(const ALine: string;
+  AWordLength: Integer): Boolean;
 { APhrase holds the words before the one just typed on the Russian layout and
   ends with a short word left on the English layout. That word is Russian
   when it starts the phrase or follows Russian words ("b" is "и"); after an
@@ -847,6 +850,18 @@ begin
   if (Length(Head) < 2) or (Head[Length(Head)] <> ' ') then
     Exit(False);
   Result := ShortWordEndingAt(Head, Length(Head) - 1, AWord);
+end;
+
+function LineEndsWithQuestionBefore(const ALine: string;
+  AWordLength: Integer): Boolean;
+var
+  Head: string;
+begin
+  if (AWordLength <= 0) or (AWordLength >= Length(ALine)) then
+    Exit(False);
+  Head := Copy(ALine, 1, Length(ALine) - AWordLength);
+  Result := (Length(Head) >= 3) and (Head[Length(Head)] = ' ') and
+    (Head[Length(Head) - 1] = '?');
 end;
 
 function TryShortWordBeforeQuestion(const ALine: string; AWordLength: Integer;
