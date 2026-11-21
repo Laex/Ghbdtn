@@ -102,6 +102,7 @@ type
     FCaretHintMode: TCaretHintMode;
     FCaretHintFlash: Boolean;
     FCaretHintAnimate: Boolean;
+    FCaretAutomationBackground: Boolean;
     FMouseMarker: TMouseMarkerMode;
     FHintOnFocusChange: Boolean;
     function GetConfigFilePath: string;
@@ -133,6 +134,8 @@ type
     procedure SetCaretHintFlash(AValue: Boolean);
     function GetCaretHintAnimate: Boolean;
     procedure SetCaretHintAnimate(AValue: Boolean);
+    function GetCaretAutomationBackground: Boolean;
+    procedure SetCaretAutomationBackground(AValue: Boolean);
     function GetMouseMarker: TMouseMarkerMode;
     procedure SetMouseMarker(AValue: TMouseMarkerMode);
     function GetHintOnFocusChange: Boolean;
@@ -231,6 +234,8 @@ type
     property CaretHintMode: TCaretHintMode read GetCaretHintMode write SetCaretHintMode;
     property CaretHintFlash: Boolean read GetCaretHintFlash write SetCaretHintFlash;
     property CaretHintAnimate: Boolean read GetCaretHintAnimate write SetCaretHintAnimate;
+    property CaretAutomationBackground: Boolean read GetCaretAutomationBackground
+      write SetCaretAutomationBackground;
     property MouseMarker: TMouseMarkerMode read GetMouseMarker write SetMouseMarker;
     property HintOnFocusChange: Boolean read GetHintOnFocusChange write SetHintOnFocusChange;
     property FixInitialCaps: Boolean read GetFixInitialCaps write SetFixInitialCaps;
@@ -456,6 +461,7 @@ begin
   FCaretHintMode := chTimed;
   FCaretHintFlash := True;
   FCaretHintAnimate := True;
+  FCaretAutomationBackground := True;
   FMouseMarker := mmDot;
   FHintOnFocusChange := True;
   FFixInitialCaps := True;
@@ -855,6 +861,18 @@ begin
   try FCaretHintAnimate := AValue; finally FLock.Release; end;
 end;
 
+function TSettings.GetCaretAutomationBackground: Boolean;
+begin
+  FLock.Acquire;
+  try Result := FCaretAutomationBackground; finally FLock.Release; end;
+end;
+
+procedure TSettings.SetCaretAutomationBackground(AValue: Boolean);
+begin
+  FLock.Acquire;
+  try FCaretAutomationBackground := AValue; finally FLock.Release; end;
+end;
+
 function TSettings.GetMouseMarker: TMouseMarkerMode;
 begin
   FLock.Acquire;
@@ -1063,6 +1081,7 @@ begin
       FCaretHintMode := StringToCaretHintMode(TextValue);
     ReadBoolean(Root, 'CaretHintFlash', FCaretHintFlash);
     ReadBoolean(Root, 'CaretHintAnimate', FCaretHintAnimate);
+    ReadBoolean(Root, 'CaretAutomationBackground', FCaretAutomationBackground);
     if Root.TryGetValue<string>('MouseMarker', TextValue) then
       FMouseMarker := StringToMouseMarkerMode(TextValue);
     ReadBoolean(Root, 'HintOnFocusChange', FHintOnFocusChange);
@@ -1290,6 +1309,8 @@ begin
     Root.AddPair('CaretHintMode', CaretHintModeToString(FCaretHintMode));
     Root.AddPair('CaretHintFlash', TJSONBool.Create(FCaretHintFlash));
     Root.AddPair('CaretHintAnimate', TJSONBool.Create(FCaretHintAnimate));
+    Root.AddPair('CaretAutomationBackground',
+      TJSONBool.Create(FCaretAutomationBackground));
     Root.AddPair('MouseMarker', MouseMarkerModeToString(FMouseMarker));
     Root.AddPair('HintOnFocusChange', TJSONBool.Create(FHintOnFocusChange));
     ExclusionsArray := TJSONArray.Create;

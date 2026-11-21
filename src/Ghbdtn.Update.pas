@@ -42,6 +42,9 @@ function UpdatePromptMode(ASwitch, AMarker: Boolean): TUpdatePrompt;
   checks quietly: a window appears only when a newer release is available. }
 function UpdateCheckRequested: Boolean;
 procedure StartUpdateCheck;
+{ A check started from the settings dialog: every outcome is shown, and the
+  marker file and --check-update are not needed. }
+procedure CheckForUpdatesNow;
 procedure CancelUpdateCheck;
 
 implementation
@@ -680,18 +683,25 @@ begin
     end);
 end;
 
-procedure StartUpdateCheck;
+procedure RunUpdateCheck(AInteractive: Boolean);
 var
   Interactive: Boolean;
 begin
-  Interactive := UpdatePromptMode(UpdateSwitchRequested,
-    UpdateMarkerPresent) = upInteractive;
-  if not UpdateCheckRequested then
-    Exit;
+  Interactive := AInteractive;
   if AppVersionString = '' then
+  begin
+    if Interactive then
+      ShowUpdateMessage('Не удалось определить версию программы.',
+        MB_ICONERROR);
     Exit;
+  end;
   if TInterlocked.CompareExchange(GCheckStarted, 1, 0) <> 0 then
+  begin
+    if Interactive then
+      ShowUpdateMessage('Проверка обновлений уже выполняется.',
+        MB_ICONINFORMATION);
     Exit;
+  end;
   with TThread.CreateAnonymousThread(
     procedure
     var
@@ -700,6 +710,7 @@ begin
       Accept: Integer;
       Current, Text: string;
     begin
+      try
       try
         if Cancelled then
           Exit;
@@ -757,11 +768,27 @@ begin
           if not Interactive then
             LogDiagnostic(dlError, deUpdateCheckFailed, 0, SingleLine(E.Message));
       end;
+      finally
+        TInterlocked.Exchange(GCheckStarted, 0);
+      end;
     end) do
   begin
     FreeOnTerminate := True;
     Start;
   end;
+end;
+
+procedure StartUpdateCheck;
+begin
+  if not UpdateCheckRequested then
+    Exit;
+  RunUpdateCheck(UpdatePromptMode(UpdateSwitchRequested,
+    UpdateMarkerPresent) = upInteractive);
+end;
+
+procedure CheckForUpdatesNow;
+begin
+  RunUpdateCheck(True);
 end;
 
 end.

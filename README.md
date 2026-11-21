@@ -153,6 +153,7 @@ Ghbdtn – аналог Punto Switcher и Caramba Switcher, написанный
   "CaretHintMode": "timed",
   "CaretHintFlash": true,
   "CaretHintAnimate": true,
+  "CaretAutomationBackground": true,
   "MouseMarker": "dot",
   "HintOnFocusChange": true,
   "Exclusions": ["cmd.exe", "powershell.exe", "wt.exe", "putty.exe"],

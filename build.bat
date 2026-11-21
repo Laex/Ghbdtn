@@ -12,8 +12,17 @@ if not "%~2"=="" if /I not "%~2"=="Win64" (
   exit /b 1
 )
 
-msbuild "%PROJ%" /nologo /v:m /t:Build /p:Config=%CFG% /p:Platform=%PLAT%
-if errorlevel 1 exit /b 1
+rem The file version comes from the latest release tag.
+set "VERPROPS=%TEMP%\ghbdtn-version.props"
+set "VERARG="
+if exist "%VERPROPS%" del "%VERPROPS%"
+powershell -NoProfile -ExecutionPolicy Bypass -File "%~dp0build-version.ps1" "%VERPROPS%" >nul
+if exist "%VERPROPS%" set "VERARG=/p:GhbdtnReleaseProps=%VERPROPS%"
+
+msbuild "%PROJ%" /nologo /v:m /t:Build /p:Config=%CFG% /p:Platform=%PLAT% %VERARG%
+set "RC=%errorlevel%"
+if exist "%VERPROPS%" del "%VERPROPS%"
+if not "%RC%"=="0" exit /b %RC%
 
 echo.
 echo %PLAT% %CFG%: %~dp0bin\Ghbdtn.exe

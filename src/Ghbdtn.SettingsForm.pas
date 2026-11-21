@@ -764,13 +764,16 @@ const
   ButtonBarHeight = 56;
 
 type
+  // DisplayRect, the page area inside the tab strip, is protected.
+  TTabsCracker = class(TPageControl);
+
+  TPageBuilder = procedure(ALeft, ARight: TWinControl;
+    var ALeftY, ARightY: Integer) of object;
+
   TfrmSettings = class(TForm)
   private
     FDpi: Integer;
-    FScroll: TScrollBox;
-    FMainPanel: TPanel;
-    FAdvancedPanel: TPanel;
-    FSpoiler: TLabel;
+    FTabs: TPageControl;
     FBar: TPanel;
     FApplyButton: TButton;
     FAutoSwitch: TSwitch;
@@ -802,7 +805,6 @@ type
     FMode: TComboBox;
     FHintMode: TComboBox;
     FDiagnostics: TComboBox;
-    FAdvancedShown: Boolean;
     function S(AValue: Integer): Integer;
     function AddSection(AParent: TWinControl; var AY: Integer;
       const ATitle: string): TLabel;
@@ -816,13 +818,13 @@ type
     procedure VolumeChange(Sender: TObject);
     procedure ShowVolume;
     function AddColumn(AParent: TWinControl; ALeft, AWidth: Integer): TPanel;
-    procedure BuildMain(ALeft, ARight: TWinControl; var ALeftY, ARightY: Integer);
-    procedure BuildAdvanced(ALeft, ARight: TWinControl; var ALeftY,
+    function AddPage(const ACaption: string; ABuild: TPageBuilder): Integer;
+    procedure BuildCorrections(ALeft, ARight: TWinControl; var ALeftY,
       ARightY: Integer);
-    procedure FitHeight;
-    procedure SpoilerClick(Sender: TObject);
-    procedure WheelScroll(Sender: TObject; Shift: TShiftState;
-      WheelDelta: Integer; MousePos: TPoint; var Handled: Boolean);
+    procedure BuildInput(ALeft, ARight: TWinControl; var ALeftY,
+      ARightY: Integer);
+    procedure BuildService(ALeft, ARight: TWinControl; var ALeftY,
+      ARightY: Integer);
     procedure ApplyClick(Sender: TObject);
     procedure OkClick(Sender: TObject);
     procedure LoadValues;
@@ -834,6 +836,7 @@ type
     procedure ResetDiagnosticsClick(Sender: TObject);
     procedure OpenLogClick(Sender: TObject);
     procedure OpenConfigClick(Sender: TObject);
+    procedure CheckUpdatesClick(Sender: TObject);
   public
     constructor Create(AOwner: TComponent); override;
   end;
@@ -972,8 +975,8 @@ begin
   Result.SetBounds(ALeft, 0, AWidth, S(2000));
 end;
 
-procedure TfrmSettings.BuildMain(ALeft, ARight: TWinControl; var ALeftY,
-  ARightY: Integer);
+procedure TfrmSettings.BuildCorrections(ALeft, ARight: TWinControl;
+  var ALeftY, ARightY: Integer);
 begin
   AddSection(ALeft, ALeftY, 'Основное');
   FAutoSwitch := AddToggle(ALeft, ALeftY, 'Исправлять раскладку автоматически');
@@ -989,14 +992,14 @@ begin
   FEnglishSecure := AddToggle(ALeft, ALeftY,
     'Английская раскладка в полях пароля и e-mail');
 
-  AddSection(ALeft, ALeftY, 'Текст при наборе');
-  FFixCaps := AddToggle(ALeft, ALeftY,
+  AddSection(ARight, ARightY, 'Текст при наборе');
+  FFixCaps := AddToggle(ARight, ARightY,
     'Две заглавные в начале слова (ТОлько -> Только)');
-  FFixCapsLock := AddToggle(ALeft, ALeftY,
+  FFixCapsLock := AddToggle(ARight, ARightY,
     'Слово с нажатым Caps Lock (пРИВЕТ -> Привет)');
-  FFixSpacing := AddToggle(ALeft, ALeftY,
+  FFixSpacing := AddToggle(ARight, ARightY,
     'Лишние пробелы и запятые (слово , -> слово,; ,, -> ,)');
-  FFixTypos := AddToggle(ALeft, ALeftY,
+  FFixTypos := AddToggle(ARight, ARightY,
     'Опечатки в буквах: перестановка, двойная буква');
 
   AddSection(ARight, ARightY, 'Спорные исправления');
@@ -1005,52 +1008,63 @@ begin
   FDash := AddToggle(ARight, ARightY, 'Тире вместо дефиса между словами');
   FQuotes := AddToggle(ARight, ARightY, 'Кавычки-ёлочки вместо "');
   FRepeated := AddToggle(ARight, ARightY, 'Удалять повтор слова (в в -> в)');
+end;
 
-  AddSection(ARight, ARightY, 'Жесты');
-  FDoubleShift := AddToggle(ARight, ARightY,
+procedure TfrmSettings.BuildInput(ALeft, ARight: TWinControl; var ALeftY,
+  ARightY: Integer);
+begin
+  AddSection(ALeft, ALeftY, 'Жесты');
+  FDoubleShift := AddToggle(ALeft, ALeftY,
     'Двойной Left Shift: конвертировать слово или выделение');
-  FDoubleCtrl := AddToggle(ARight, ARightY,
+  FDoubleCtrl := AddToggle(ALeft, ALeftY,
     'Двойной Left Ctrl: конвертировать набранную строку');
-  FRightCtrlSwitch := AddToggle(ARight, ARightY,
+  FRightCtrlSwitch := AddToggle(ALeft, ALeftY,
     'Одинарный Right Ctrl: переключает раскладку');
 
-  AddSection(ARight, ARightY, 'Звук и подсказки');
-  FSoundSwitch := AddToggle(ARight, ARightY, 'Звук при переключении');
-  FVolume := AddVolume(ARight, ARightY);
+  AddSection(ALeft, ALeftY, 'Звук');
+  FSoundSwitch := AddToggle(ALeft, ALeftY, 'Звук при переключении');
+  FSoundRU := AddToggle(ALeft, ALeftY, 'Звук при вводе в русской раскладке');
+  FVolume := AddVolume(ALeft, ALeftY);
+
+  AddSection(ARight, ARightY, 'Подсказки');
   FHintMode := AddCombo(ARight, ARightY, 'Подсказка у каретки',
     ['На время', 'Постоянно (следует за кареткой)', 'Не показывать']);
   FMouseMarker := AddCombo(ARight, ARightY, 'Метка у курсора мыши',
     ['Цветная точка', 'Буквы en / EN', 'Не показывать']);
   FHintOnFocus := AddToggle(ARight, ARightY,
     'Подсказка языка при переходе в другое окно');
+  FHintFlash := AddToggle(ARight, ARightY, 'Вспышка подсказки при появлении');
+  FHintAnimate := AddToggle(ARight, ARightY, 'Анимация размера подсказки');
+
+  AddSection(ARight, ARightY, 'Поведение');
+  FSelectionLayout := AddToggle(ARight, ARightY,
+    'Менять раскладку после конвертации выделения');
+  FPauseFullscreen := AddToggle(ARight, ARightY,
+    'Не вмешиваться в полноэкранных приложениях');
 end;
 
-procedure TfrmSettings.BuildAdvanced(ALeft, ARight: TWinControl; var ALeftY,
+procedure TfrmSettings.BuildService(ALeft, ARight: TWinControl; var ALeftY,
   ARightY: Integer);
 var
   X: Integer;
   First: TButton;
 begin
   X := S(PageMargin);
-  AddSection(ALeft, ALeftY, 'Поведение');
-  FSoundRU := AddToggle(ALeft, ALeftY, 'Звук при вводе в русской раскладке');
-  FSelectionLayout := AddToggle(ALeft, ALeftY,
-    'Менять раскладку после конвертации выделения');
-  FPauseFullscreen := AddToggle(ALeft, ALeftY,
-    'Не вмешиваться в полноэкранных приложениях');
-  FHintFlash := AddToggle(ALeft, ALeftY, 'Вспышка подсказки при появлении');
-  FHintAnimate := AddToggle(ALeft, ALeftY, 'Анимация размера подсказки');
-  Inc(ALeftY, S(8));
-
-  AddSection(ARight, ARightY, 'Слова и приложения');
-  First := AddButton(ARight, 'Список обучения', X, ARightY, LearningListClick);
-  AddButton(ARight, 'Исключения', First.BoundsRect.Right + S(8), ARightY,
+  AddSection(ALeft, ALeftY, 'Слова и приложения');
+  First := AddButton(ALeft, 'Список обучения', X, ALeftY, LearningListClick);
+  AddButton(ALeft, 'Исключения', First.BoundsRect.Right + S(8), ALeftY,
     ExclusionsClick);
-  Inc(ARightY, S(38));
-  First := AddButton(ARight, 'Правила приложений', X, ARightY, RulesClick);
-  AddButton(ARight, 'Сбросить обучение', First.BoundsRect.Right + S(8),
-    ARightY, ResetLearningClick);
-  Inc(ARightY, S(38));
+  Inc(ALeftY, S(38));
+  First := AddButton(ALeft, 'Правила приложений', X, ALeftY, RulesClick);
+  AddButton(ALeft, 'Сбросить обучение', First.BoundsRect.Right + S(8),
+    ALeftY, ResetLearningClick);
+  Inc(ALeftY, S(38));
+
+  AddSection(ALeft, ALeftY, 'Программа');
+  First := AddButton(ALeft, 'Открыть config.json', X, ALeftY, OpenConfigClick);
+  AddButton(ALeft, 'Проверить обновления', First.BoundsRect.Right + S(8),
+    ALeftY, CheckUpdatesClick);
+  Inc(ALeftY, S(38));
 
   AddSection(ARight, ARightY, 'Диагностика');
   FDiagnostics := AddCombo(ARight, ARightY, 'Журнал',
@@ -1059,16 +1073,40 @@ begin
   AddButton(ARight, 'Очистить журнал', First.BoundsRect.Right + S(8),
     ARightY, ResetDiagnosticsClick);
   Inc(ARightY, S(38));
-  AddButton(ARight, 'Открыть config.json', X, ARightY, OpenConfigClick);
-  Inc(ARightY, S(44));
+end;
+
+{ A page is two columns of rows. Returns the height its rows need. }
+function TfrmSettings.AddPage(const ACaption: string;
+  ABuild: TPageBuilder): Integer;
+var
+  Sheet: TTabSheet;
+  Area: TRect;
+  W, LeftY, RightY: Integer;
+  LeftColumn, RightColumn: TPanel;
+begin
+  Sheet := TTabSheet.Create(Self);
+  Sheet.PageControl := FTabs;
+  Sheet.Caption := ACaption;
+  Area := TTabsCracker(FTabs).DisplayRect;
+  W := Area.Right - Area.Left;
+  LeftColumn := AddColumn(Sheet, 0, W div 2);
+  RightColumn := AddColumn(Sheet, W div 2, W - W div 2);
+  LeftY := 0;
+  RightY := 0;
+  ABuild(LeftColumn, RightColumn, LeftY, RightY);
+  // A column is a window and hides whatever lies under it, so it ends where
+  // its rows end.
+  LeftColumn.Height := LeftY;
+  RightColumn.Height := RightY;
+  Result := Max(LeftY, RightY);
 end;
 
 constructor TfrmSettings.Create(AOwner: TComponent);
 var
-  Y, W, LeftY, RightY: Integer;
+  Content, Chrome: Integer;
+  Area: TRect;
   Version: string;
   VersionLabel: TLabel;
-  LeftColumn, RightColumn: TPanel;
   OkButton, CancelButton: TButton;
 begin
   inherited CreateNew(AOwner);
@@ -1083,8 +1121,7 @@ begin
   Font.Size := 9;
   Color := clWindow;
   ClientWidth := Min(S(940), Screen.WorkAreaWidth - S(40));
-  ClientHeight := S(400);
-  OnMouseWheel := WheelScroll;
+  ClientHeight := S(600);
   KeyPreview := True;
 
   FBar := TPanel.Create(Self);
@@ -1095,60 +1132,19 @@ begin
   FBar.ParentBackground := False;
   FBar.Color := clBtnFace;
 
-  FScroll := TScrollBox.Create(Self);
-  FScroll.Parent := Self;
-  FScroll.Align := alClient;
-  FScroll.BorderStyle := bsNone;
-  FScroll.HorzScrollBar.Visible := False;
-  FScroll.VertScrollBar.Smooth := True;
-  FScroll.VertScrollBar.Tracking := True;
-  FScroll.Color := clWindow;
+  FTabs := TPageControl.Create(Self);
+  FTabs.Parent := Self;
+  FTabs.Align := alClient;
+  FTabs.HandleNeeded;
 
-  W := ClientWidth - GetSystemMetrics(SM_CXVSCROLL);
-  FMainPanel := TPanel.Create(Self);
-  FMainPanel.Parent := FScroll;
-  FMainPanel.BevelOuter := bvNone;
-  FMainPanel.ParentBackground := False;
-  FMainPanel.Color := clWindow;
-  FMainPanel.SetBounds(0, 0, W, S(100));
-  LeftY := 0;
-  RightY := 0;
-  LeftColumn := AddColumn(FMainPanel, 0, W div 2);
-  RightColumn := AddColumn(FMainPanel, W div 2, W - W div 2);
-  BuildMain(LeftColumn, RightColumn, LeftY, RightY);
-  // A column is a window and hides whatever lies under it, so it ends where
-  // its rows end and leaves the row below it visible.
-  LeftColumn.Height := LeftY;
-  RightColumn.Height := RightY;
-  Y := Max(LeftY, RightY);
-
-  FSpoiler := TLabel.Create(Self);
-  FSpoiler.Parent := FMainPanel;
-  FSpoiler.Cursor := crHandPoint;
-  FSpoiler.Font.Style := [fsBold];
-  FSpoiler.Font.Size := 10;
-  FSpoiler.Font.Color := TColor($9E5A00);
-  FSpoiler.Left := S(PageMargin);
-  FSpoiler.Top := Y + S(SectionGap) + S(4);
-  FSpoiler.OnClick := SpoilerClick;
-  Y := FSpoiler.Top + S(SectionHeight) + S(4);
-  FMainPanel.Height := Y;
-
-  FAdvancedPanel := TPanel.Create(Self);
-  FAdvancedPanel.Parent := FScroll;
-  FAdvancedPanel.BevelOuter := bvNone;
-  FAdvancedPanel.ParentBackground := False;
-  FAdvancedPanel.Color := clWindow;
-  FAdvancedPanel.SetBounds(0, FMainPanel.Height, W, S(100));
-  LeftY := 0;
-  RightY := 0;
-  LeftColumn := AddColumn(FAdvancedPanel, 0, W div 2);
-  RightColumn := AddColumn(FAdvancedPanel, W div 2, W - W div 2);
-  BuildAdvanced(LeftColumn, RightColumn, LeftY, RightY);
-  LeftColumn.Height := LeftY;
-  RightColumn.Height := RightY;
-  FAdvancedPanel.Height := Max(LeftY, RightY);
-  FAdvancedPanel.Visible := False;
+  // Every page is laid out for the same width; the dialog is as tall as the
+  // longest page, so no page needs a scroll bar.
+  Content := AddPage('Исправления', BuildCorrections);
+  Content := Max(Content, AddPage('Ввод и подсказки', BuildInput));
+  Content := Max(Content, AddPage('Слова и сервис', BuildService));
+  Area := TTabsCracker(FTabs).DisplayRect;
+  Chrome := FTabs.Height - (Area.Bottom - Area.Top);
+  ClientHeight := Content + Chrome + S(8) + S(ButtonBarHeight);
 
   Version := AppVersionString;
   if Version <> '' then
@@ -1186,47 +1182,6 @@ begin
 
   LoadValues;
   FVolume.OnChange := VolumeChange;
-  FAdvancedShown := False;
-  SpoilerClick(nil);
-  SpoilerClick(nil);
-end;
-
-procedure TfrmSettings.FitHeight;
-var
-  Content, Limit: Integer;
-  Area: TRect;
-begin
-  Content := FMainPanel.Height;
-  if FAdvancedShown then
-    Inc(Content, FAdvancedPanel.Height);
-  Area := Screen.WorkAreaRect;
-  Limit := (Area.Bottom - Area.Top) * 9 div 10 - S(ButtonBarHeight) -
-    (Height - ClientHeight);
-  ClientHeight := Min(Content, Limit) + S(ButtonBarHeight);
-  if FAdvancedShown then
-    Top := Max(Area.Top, Min(Top, Area.Bottom - Height));
-  FScroll.VertScrollBar.Range := Content;
-  if Content <= FScroll.ClientHeight then
-    FScroll.VertScrollBar.Position := 0;
-end;
-
-procedure TfrmSettings.SpoilerClick(Sender: TObject);
-begin
-  FAdvancedShown := not FAdvancedShown;
-  FAdvancedPanel.Visible := FAdvancedShown;
-  if FAdvancedShown then
-    FSpoiler.Caption := #$25BE'  Дополнительно'
-  else
-    FSpoiler.Caption := #$25B8'  Дополнительно';
-  FitHeight;
-end;
-
-procedure TfrmSettings.WheelScroll(Sender: TObject; Shift: TShiftState;
-  WheelDelta: Integer; MousePos: TPoint; var Handled: Boolean);
-begin
-  FScroll.VertScrollBar.Position := FScroll.VertScrollBar.Position -
-    WheelDelta div 2;
-  Handled := True;
 end;
 
 procedure TfrmSettings.LoadValues;
@@ -1367,6 +1322,11 @@ procedure TfrmSettings.OpenConfigClick(Sender: TObject);
 begin
   ShellExecute(0, 'open', PChar(AppSettings.ConfigFilePath), nil, nil,
     SW_SHOWNORMAL);
+end;
+
+procedure TfrmSettings.CheckUpdatesClick(Sender: TObject);
+begin
+  CheckForUpdatesNow;
 end;
 
 function EditAppSettings: Boolean;

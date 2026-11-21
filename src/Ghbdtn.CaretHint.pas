@@ -25,6 +25,9 @@ uses
   Winapi.Messages,
   Winapi.ActiveX,
   System.SysUtils,
+  System.SyncObjs,
+  System.Diagnostics,
+  System.Math,
   Vcl.Graphics,
   Vcl.ExtCtrls,
   Winapi.UIAutomation,
@@ -36,6 +39,12 @@ const
   MarkerAlpha = 210;
   // Polled often so the label keeps up with the mouse.
   MouseMarkerPollMs = 40;
+  // While the dot is catching up with the pointer it is moved every frame.
+  MouseMarkerFrameMs = 16;
+  // Time constant of the dot's approach to the pointer: after this long it has
+  // covered about 63 percent of the gap.
+  MouseDotLagMs = 55;
+  MouseDotMaxStepMs = 100;
   MouseDotSize = 9;
   MouseTextWidth = 26;
   MouseTextHeight = 16;
@@ -104,9 +113,18 @@ type
     FFullscreen: Boolean;
     FFullscreenTick: UInt64;
     FTimer: TTimer;
+    FStateTick: UInt64;
+    FWantShow: Boolean;
+    FSmooth: Boolean;
+    FPosX, FPosY: Double;
+    FStamp: Int64;
+    FPlaced: TPoint;
+    FFast: Boolean;
     procedure HideMarker;
     procedure ApplyMode(AMode: TMouseMarkerMode);
     function BlockedByFullscreen: Boolean;
+    function RefreshState(out AMode: TMouseMarkerMode): Boolean;
+    procedure SetTimerRate(AFast: Boolean);
     procedure TimerTick(Sender: TObject);
   protected
     procedure CreateParams(var Params: TCreateParams); override;
@@ -257,14 +275,143 @@ var
   AutomationCaretPoint: TPoint;
   AutomationCaretFound: Boolean;
 
-{ The UI Automation query is a cross-process call made on the main thread, so
-  the follow timer reuses a recent answer instead of repeating it every tick. }
-function TryGetCachedAutomationCaret(out APoint: TPoint): Boolean;
 const
   AutomationCaretCacheMs = 300;
+  // An answer older than this is dropped: it belongs to a caret that has
+  // probably moved or to a window that is no longer in front.
+  AutomationCaretMaxAgeMs = 1500;
+
+type
+  { Runs the UI Automation caret query off the main thread. The query is a
+    cross-process call that blocks for as long as the target application does
+    not answer; on the main thread that would also stall the keyboard and
+    mouse hooks. A stuck query leaves only this thread waiting, and callers
+    keep getting the last answer until it expires. }
+  TAutomationCaretWorker = class(TThread)
+  private
+    FWake: TEvent;
+    FLock: TCriticalSection;
+    FBusy: Boolean;
+    FPoint: TPoint;
+    FFound: Boolean;
+    FAnswerTick: UInt64;
+    FAnswerWindow: HWND;
+  protected
+    procedure Execute; override;
+    procedure TerminatedSet; override;
+  public
+    constructor Create;
+    destructor Destroy; override;
+    function Poll(out APoint: TPoint): Boolean;
+  end;
+
+constructor TAutomationCaretWorker.Create;
+begin
+  inherited Create(True);
+  FreeOnTerminate := True;
+  FWake := TEvent.Create(nil, False, False, '');
+  FLock := TCriticalSection.Create;
+end;
+
+destructor TAutomationCaretWorker.Destroy;
+begin
+  FLock.Free;
+  FWake.Free;
+  inherited;
+end;
+
+procedure TAutomationCaretWorker.TerminatedSet;
+begin
+  inherited;
+  FWake.SetEvent;
+end;
+
+procedure TAutomationCaretWorker.Execute;
+var
+  Init: HRESULT;
+  Window: HWND;
+  Point: TPoint;
+  Found: Boolean;
+begin
+  Init := CoInitializeEx(nil, COINIT_MULTITHREADED);
+  try
+    while not Terminated do
+    begin
+      FWake.WaitFor(INFINITE);
+      if Terminated then
+        Break;
+      Window := GetForegroundWindow;
+      try
+        Found := TryGetAutomationCaret(Point);
+      except
+        Found := False;
+      end;
+      FLock.Acquire;
+      try
+        FPoint := Point;
+        FFound := Found;
+        FAnswerWindow := Window;
+        FAnswerTick := GetTickCount64;
+        FBusy := False;
+      finally
+        FLock.Release;
+      end;
+    end;
+  finally
+    if (Init = S_OK) or (Init = S_FALSE) then
+      CoUninitialize;
+  end;
+end;
+
+{ Returns the last answer when it is recent and for the window now in front,
+  and asks for a fresh one when the answer is stale and no query is running. }
+function TAutomationCaretWorker.Poll(out APoint: TPoint): Boolean;
+var
+  Tick: UInt64;
+  Window: HWND;
+  Fresh, SameWindow, Wake: Boolean;
+begin
+  Tick := GetTickCount64;
+  Window := GetForegroundWindow;
+  FLock.Acquire;
+  try
+    SameWindow := FAnswerWindow = Window;
+    Fresh := (FAnswerTick <> 0) and (Tick - FAnswerTick <= AutomationCaretMaxAgeMs);
+    Wake := not FBusy and
+      ((FAnswerTick = 0) or not SameWindow or
+       (Tick - FAnswerTick > AutomationCaretCacheMs));
+    if Wake then
+      FBusy := True;
+    Result := Fresh and SameWindow and FFound;
+    if Result then
+      APoint := FPoint
+    else
+      APoint := Point(0, 0);
+  finally
+    FLock.Release;
+  end;
+  if Wake then
+    FWake.SetEvent;
+end;
+
+var
+  AutomationWorker: TAutomationCaretWorker;
+
+{ The follow timer reuses a recent answer instead of repeating the query every
+  tick. With CaretAutomationBackground off the query runs on the main thread. }
+function TryGetCachedAutomationCaret(out APoint: TPoint): Boolean;
 var
   Tick: UInt64;
 begin
+  if AppSettings.CaretAutomationBackground then
+  begin
+    if AutomationWorker = nil then
+    begin
+      AutomationWorker := TAutomationCaretWorker.Create;
+      AutomationWorker.Start;
+    end;
+    Exit(AutomationWorker.Poll(APoint));
+  end;
   Tick := GetTickCount64;
   if (AutomationCaretTick = 0) or
      (Tick - AutomationCaretTick > AutomationCaretCacheMs) then
@@ -721,36 +868,96 @@ begin
   Result := FFullscreen;
 end;
 
+{ Decides whether the marker is shown and brings its mode, layout and Caps Lock
+  state up to date. Returns False when it has to be hidden. }
+function TMouseMarkerForm.RefreshState(out AMode: TMouseMarkerMode): Boolean;
+var
+  Lang: TLangKind;
+  Caps: Boolean;
+begin
+  AMode := AppSettings.MouseMarker;
+  Result := False;
+  if AMode = mmOff then
+    Exit;
+  Lang := GetForegroundLangKind;
+  if (Lang = lkUnknown) or BlockedByFullscreen then
+    Exit;
+  ApplyMode(AMode);
+  Caps := IsCapsLockOn;
+  if (Lang <> FLang) or (Caps <> FCaps) then
+  begin
+    FLang := Lang;
+    FCaps := Caps;
+    Invalidate;
+  end;
+  Result := True;
+end;
+
+procedure TMouseMarkerForm.SetTimerRate(AFast: Boolean);
+begin
+  if AFast = FFast then
+    Exit;
+  FFast := AFast;
+  if AFast then
+    FTimer.Interval := MouseMarkerFrameMs
+  else
+    FTimer.Interval := MouseMarkerPollMs;
+end;
+
+{ The state checks run at the slow poll rate. The position is read on every
+  tick; in dot mode the dot eases toward the pointer instead of jumping, and
+  the timer runs at frame rate only while it is still moving. }
 procedure TMouseMarkerForm.TimerTick(Sender: TObject);
 var
   Mode: TMouseMarkerMode;
-  Lang: TLangKind;
-  Caps: Boolean;
   Spot: TPoint;
+  Tick: UInt64;
+  Stamp: Int64;
+  StepMs, Gain, TargetX, TargetY: Double;
   Width, Height: Integer;
+  Place: TPoint;
 begin
   try
+    Tick := GetTickCount64;
     Mode := AppSettings.MouseMarker;
-    if Mode = mmOff then
+    if (FStateTick = 0) or (Tick - FStateTick >= MouseMarkerPollMs) or
+       (Mode <> FMode) then
+    begin
+      FWantShow := RefreshState(Mode);
+      FStateTick := Tick;
+    end;
+    if not FWantShow or not GetCursorPos(Spot) then
     begin
       HideMarker;
+      FSmooth := False;
+      SetTimerRate(False);
       Exit;
     end;
-    Lang := GetForegroundLangKind;
-    if (Lang = lkUnknown) or BlockedByFullscreen or
-       not GetCursorPos(Spot) then
+    TargetX := Spot.X + MouseMarkerOffsetX;
+    TargetY := Spot.Y + MouseMarkerOffsetY;
+    Stamp := TStopwatch.GetTimeStamp;
+    if (Mode <> mmDot) or not FSmooth or not FShown then
     begin
-      HideMarker;
-      Exit;
-    end;
-    ApplyMode(Mode);
-    Caps := IsCapsLockOn;
-    if (Lang <> FLang) or (Caps <> FCaps) then
+      FPosX := TargetX;
+      FPosY := TargetY;
+    end
+    else
     begin
-      FLang := Lang;
-      FCaps := Caps;
-      Invalidate;
+      StepMs := (Stamp - FStamp) * 1000.0 / TStopwatch.Frequency;
+      if StepMs > MouseDotMaxStepMs then
+        StepMs := MouseDotMaxStepMs;
+      Gain := 1 - Exp(-StepMs / MouseDotLagMs);
+      FPosX := FPosX + (TargetX - FPosX) * Gain;
+      FPosY := FPosY + (TargetY - FPosY) * Gain;
+      if (Abs(TargetX - FPosX) < 0.5) and (Abs(TargetY - FPosY) < 0.5) then
+      begin
+        FPosX := TargetX;
+        FPosY := TargetY;
+      end;
     end;
+    FStamp := Stamp;
+    FSmooth := Mode = mmDot;
+    SetTimerRate(FSmooth and ((FPosX <> TargetX) or (FPosY <> TargetY)));
     if Mode = mmText then
     begin
       Width := MouseTextWidth;
@@ -761,9 +968,13 @@ begin
       Width := MouseDotSize;
       Height := MouseDotSize;
     end;
-    SetWindowPos(Handle, HWND_TOPMOST, Spot.X + MouseMarkerOffsetX,
-      Spot.Y + MouseMarkerOffsetY, Width, Height,
+    Place := Point(Round(FPosX), Round(FPosY));
+    if FShown and (Place = FPlaced) and (ClientWidth = Width) and
+       (ClientHeight = Height) then
+      Exit;
+    SetWindowPos(Handle, HWND_TOPMOST, Place.X, Place.Y, Width, Height,
       SWP_NOACTIVATE or SWP_SHOWWINDOW);
+    FPlaced := Place;
     FShown := True;
   except
     HideMarker;
@@ -801,6 +1012,9 @@ initialization
   HintOwner := 0;
 
 finalization
+  // Not waited for: a worker stuck in a query must not block shutdown.
+  if AutomationWorker <> nil then
+    AutomationWorker.Terminate;
   FreeAndNil(HintForm);
   FreeAndNil(MouseMarkerForm);
   if HintOwner <> 0 then
