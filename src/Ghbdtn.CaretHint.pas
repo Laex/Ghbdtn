@@ -14,6 +14,10 @@ procedure ShowCaretHint(ALang: TLangKind; const ANote: string = '');
 { Shows a short message at the caret without a layout tag. Safe to call
   from any thread. }
 procedure ShowCaretNote(const ANote: string);
+{ Starts the label beside the mouse pointer: a dot in the color of the current
+  layout or the letters en/EN. It follows AppSettings.MouseMarker, so the
+  setting takes effect without a restart. Call from the main thread. }
+procedure StartMouseMarker;
 
 implementation
 
@@ -25,9 +29,19 @@ uses
   Vcl.ExtCtrls,
   Winapi.UIAutomation,
   Ghbdtn.Colors,
+  Ghbdtn.Fullscreen,
   Ghbdtn.Settings;
 
 const
+  MarkerAlpha = 210;
+  // Polled often so the label keeps up with the mouse.
+  MouseMarkerPollMs = 40;
+  MouseDotSize = 9;
+  MouseTextWidth = 26;
+  MouseTextHeight = 16;
+  MouseMarkerOffsetX = 14;
+  MouseMarkerOffsetY = 16;
+  MarkerFullscreenCheckMs = 500;
   HintWidth = 42;
   HintHeight = 22;
   HintVisibleMs = 1100;
@@ -47,12 +61,14 @@ type
     FDragAnchor: TPoint;
     FOffsetOrigin: TPoint;
     FAppearedAt: UInt64;
+    FShownAt: UInt64;
     FNote: string;
     FLang: TLangKind;
     FNoteUntil: UInt64;
     FTimer: TTimer;
     procedure HideHint;
     procedure PlaceAtCaret;
+    procedure FollowTick;
     function HintBaseColor: TColor;
     function HintInkColor: TColor;
     function HintFillColor: TColor;
@@ -70,11 +86,39 @@ type
     procedure Paint; override;
   public
     constructor Create(AOwner: TComponent); override;
-    procedure ShowLanguage(ALang: TLangKind; const ANote: string);
+    { AQuiet refreshes the text without the appear flash and animation. }
+    procedure ShowLanguage(ALang: TLangKind; const ANote: string;
+      AQuiet: Boolean = False);
+  end;
+
+  { Click-through label beside the mouse pointer in the color of the layout.
+    Unlike the hint it is not tied to a layout change: it is drawn for as long
+    as the foreground layout is known. }
+  TMouseMarkerForm = class(TForm)
+  private
+    FLang: TLangKind;
+    FCaps: Boolean;
+    FMode: TMouseMarkerMode;
+    FModeApplied: Boolean;
+    FShown: Boolean;
+    FFullscreen: Boolean;
+    FFullscreenTick: UInt64;
+    FTimer: TTimer;
+    procedure HideMarker;
+    procedure ApplyMode(AMode: TMouseMarkerMode);
+    function BlockedByFullscreen: Boolean;
+    procedure TimerTick(Sender: TObject);
+  protected
+    procedure CreateParams(var Params: TCreateParams); override;
+    procedure CreateWnd; override;
+    procedure Paint; override;
+  public
+    constructor Create(AOwner: TComponent); override;
   end;
 
 var
   HintForm: TCaretHintForm;
+  MouseMarkerForm: TMouseMarkerForm;
   HintOwner: HWND;
 
 function HintOwnerWindow: HWND;
@@ -236,11 +280,17 @@ begin
   Result := AutomationCaretFound;
 end;
 
-function TryGetCaretScreenPoint(out APoint: TPoint): Boolean;
+{ The text caret only; the mouse pointer is not a fallback. }
+function TryGetTextCaret(out APoint: TPoint): Boolean;
 begin
   Result := TryGetWin32Caret(APoint);
   if not Result then
     Result := TryGetCachedAutomationCaret(APoint);
+end;
+
+function TryGetCaretScreenPoint(out APoint: TPoint): Boolean;
+begin
+  Result := TryGetTextCaret(APoint);
   if not Result then
     Result := GetCursorPos(APoint);
 end;
@@ -388,6 +438,18 @@ var
 begin
   if FDragging then
     Caret := FDragAnchor
+  else if (AppSettings.MouseMarker <> mmOff) and (FLang <> lkUnknown) then
+  begin
+    // The mouse label already shows the layout at the pointer, so a layout
+    // hint appears only where a text caret exists. A bare message keeps the
+    // pointer fallback.
+    if not TryGetTextCaret(Caret) then
+    begin
+      if FShown then
+        HideHint;
+      Exit;
+    end;
+  end
   else if not TryGetCaretScreenPoint(Caret) then
     Exit;
   Scale := HintScale;
@@ -410,7 +472,8 @@ begin
   FShown := True;
 end;
 
-procedure TCaretHintForm.ShowLanguage(ALang: TLangKind; const ANote: string);
+procedure TCaretHintForm.ShowLanguage(ALang: TLangKind; const ANote: string;
+  AQuiet: Boolean);
 var
   Note: string;
 begin
@@ -430,10 +493,8 @@ begin
     Note := FNote
   else
     FNote := '';
-  if ALang = lkRU then
-    Caption := 'RU'
-  else if ALang = lkEN then
-    Caption := 'EN'
+  if ALang <> lkUnknown then
+    Caption := LangLabel(ALang, IsCapsLockOn)
   else if Note = '' then
     Exit
   else
@@ -445,10 +506,14 @@ begin
     Caption := Caption + Note;
   end;
   FAnchorWindow := GetForegroundWindow;
-  if AppSettings.CaretHintFlash or AppSettings.CaretHintAnimate then
-    FAppearedAt := GetTickCount64
-  else
-    FAppearedAt := 0;
+  if not AQuiet then
+  begin
+    FShownAt := GetTickCount64;
+    if AppSettings.CaretHintFlash or AppSettings.CaretHintAnimate then
+      FAppearedAt := FShownAt
+    else
+      FAppearedAt := 0;
+  end;
   if AppSettings.CaretHintMode = chTimed then
     FHideAt := GetTickCount64 + HintVisibleMs
   else
@@ -457,9 +522,45 @@ begin
   Invalidate;
 end;
 
+{ Continuous mode: the badge stays at the text caret of the foreground window
+  for as long as one is found, and follows layout and Caps Lock changes. Right
+  after a layout change in a window without a text caret the badge stays for
+  the usual time at the mouse pointer, where the hint is placed then; with the
+  mouse label on there is no such fallback. }
+procedure TCaretHintForm.FollowTick;
+var
+  Lang: TLangKind;
+  Spot: TPoint;
+  Tick: UInt64;
+begin
+  Lang := GetForegroundLangKind;
+  if (Lang = lkUnknown) or not TryGetTextCaret(Spot) then
+  begin
+    if FShown and ((AppSettings.MouseMarker <> mmOff) or
+       (GetTickCount64 - FShownAt > HintVisibleMs)) then
+      HideHint;
+    Exit;
+  end;
+  Tick := GetTickCount64;
+  if (FNote <> '') and (Tick <= FNoteUntil) then
+    PlaceAtCaret
+  else if not FShown or (GetForegroundWindow <> FAnchorWindow) then
+    ShowLanguage(Lang, '')
+  else if Caption <> LangLabel(Lang, IsCapsLockOn) then
+    ShowLanguage(Lang, '', True)
+  else
+    PlaceAtCaret;
+end;
+
 procedure TCaretHintForm.TimerTick(Sender: TObject);
 begin
-  if not FShown then
+  if AppSettings.CaretHintMode = chOff then
+  begin
+    if FShown then
+      HideHint;
+    Exit;
+  end;
+  if (AppSettings.CaretHintMode = chTimed) and not FShown then
     Exit;
   if FDragging or ((GetAsyncKeyState(VK_SHIFT) and $8000) <> 0) then
   begin
@@ -479,17 +580,9 @@ begin
     PlaceAtCaret;
     Invalidate;
   end;
-  if AppSettings.CaretHintMode = chOff then
-  begin
-    HideHint;
-    Exit;
-  end;
   if AppSettings.CaretHintMode = chFollow then
   begin
-    if (FAnchorWindow = 0) or (GetForegroundWindow <> FAnchorWindow) then
-      HideHint
-    else
-      PlaceAtCaret;
+    FollowTick;
     Exit;
   end;
   if (FHideAt <> 0) and (GetTickCount64 >= FHideAt) then
@@ -533,6 +626,156 @@ begin
   FHideAt := GetTickCount64 + HintVisibleMs;
 end;
 
+constructor TMouseMarkerForm.Create(AOwner: TComponent);
+begin
+  inherited CreateNew(AOwner);
+  BorderStyle := bsNone;
+  FormStyle := fsStayOnTop;
+  FLang := lkUnknown;
+  FMode := mmOff;
+  ClientWidth := MouseDotSize;
+  ClientHeight := MouseDotSize;
+  Position := poDesigned;
+  AlphaBlend := True;
+  AlphaBlendValue := MarkerAlpha;
+  Visible := False;
+  FTimer := TTimer.Create(Self);
+  FTimer.Interval := MouseMarkerPollMs;
+  FTimer.OnTimer := TimerTick;
+  FTimer.Enabled := True;
+  HandleNeeded;
+end;
+
+procedure TMouseMarkerForm.CreateParams(var Params: TCreateParams);
+begin
+  inherited CreateParams(Params);
+  Params.Style := WS_POPUP;
+  Params.ExStyle := (Params.ExStyle or WS_EX_TOPMOST or WS_EX_TOOLWINDOW or
+    WS_EX_NOACTIVATE or WS_EX_TRANSPARENT) and not WS_EX_APPWINDOW;
+  Params.WndParent := HintOwnerWindow;
+end;
+
+procedure TMouseMarkerForm.CreateWnd;
+begin
+  inherited CreateWnd;
+  ApplyNoTaskbarStyle(Handle);
+end;
+
+procedure TMouseMarkerForm.Paint;
+var
+  R: TRect;
+  Text: string;
+begin
+  Canvas.Brush.Color := BadgeColorFor(FLang);
+  Canvas.FillRect(ClientRect);
+  if FMode <> mmText then
+    Exit;
+  Canvas.Pen.Color := DarkerShade(BadgeColorFor(FLang));
+  Canvas.Brush.Style := bsClear;
+  Canvas.Rectangle(0, 0, ClientWidth, ClientHeight);
+  Canvas.Font.Name := 'Segoe UI';
+  Canvas.Font.Style := [fsBold];
+  Canvas.Font.Height := -11;
+  Canvas.Font.Color := BadgeInkFor(FLang);
+  Text := LangLabel(FLang, FCaps);
+  R := ClientRect;
+  DrawText(Canvas.Handle, PChar(Text), Length(Text), R,
+    DT_CENTER or DT_VCENTER or DT_SINGLELINE);
+end;
+
+procedure TMouseMarkerForm.HideMarker;
+begin
+  if FShown and HandleAllocated then
+    ShowWindow(Handle, SW_HIDE);
+  FShown := False;
+end;
+
+{ The dot is clipped to a circle; the letters use the whole rectangle. }
+procedure TMouseMarkerForm.ApplyMode(AMode: TMouseMarkerMode);
+begin
+  if FModeApplied and (AMode = FMode) then
+    Exit;
+  FMode := AMode;
+  FModeApplied := True;
+  if AMode = mmText then
+    SetWindowRgn(Handle, 0, True)
+  else
+    SetWindowRgn(Handle, CreateEllipticRgn(0, 0, MouseDotSize + 1,
+      MouseDotSize + 1), True);
+  Invalidate;
+end;
+
+function TMouseMarkerForm.BlockedByFullscreen: Boolean;
+var
+  Tick: UInt64;
+begin
+  if not AppSettings.PauseInFullscreen then
+    Exit(False);
+  Tick := GetTickCount64;
+  if (FFullscreenTick = 0) or
+     (Tick - FFullscreenTick > MarkerFullscreenCheckMs) then
+  begin
+    FFullscreen := IsForegroundFullscreen;
+    FFullscreenTick := Tick;
+  end;
+  Result := FFullscreen;
+end;
+
+procedure TMouseMarkerForm.TimerTick(Sender: TObject);
+var
+  Mode: TMouseMarkerMode;
+  Lang: TLangKind;
+  Caps: Boolean;
+  Spot: TPoint;
+  Width, Height: Integer;
+begin
+  try
+    Mode := AppSettings.MouseMarker;
+    if Mode = mmOff then
+    begin
+      HideMarker;
+      Exit;
+    end;
+    Lang := GetForegroundLangKind;
+    if (Lang = lkUnknown) or BlockedByFullscreen or
+       not GetCursorPos(Spot) then
+    begin
+      HideMarker;
+      Exit;
+    end;
+    ApplyMode(Mode);
+    Caps := IsCapsLockOn;
+    if (Lang <> FLang) or (Caps <> FCaps) then
+    begin
+      FLang := Lang;
+      FCaps := Caps;
+      Invalidate;
+    end;
+    if Mode = mmText then
+    begin
+      Width := MouseTextWidth;
+      Height := MouseTextHeight;
+    end
+    else
+    begin
+      Width := MouseDotSize;
+      Height := MouseDotSize;
+    end;
+    SetWindowPos(Handle, HWND_TOPMOST, Spot.X + MouseMarkerOffsetX,
+      Spot.Y + MouseMarkerOffsetY, Width, Height,
+      SWP_NOACTIVATE or SWP_SHOWWINDOW);
+    FShown := True;
+  except
+    HideMarker;
+  end;
+end;
+
+procedure StartMouseMarker;
+begin
+  if MouseMarkerForm = nil then
+    MouseMarkerForm := TMouseMarkerForm.Create(nil);
+end;
+
 procedure ShowCaretHint(ALang: TLangKind; const ANote: string);
 begin
   if HintForm = nil then
@@ -554,10 +797,12 @@ end;
 
 initialization
   HintForm := nil;
+  MouseMarkerForm := nil;
   HintOwner := 0;
 
 finalization
   FreeAndNil(HintForm);
+  FreeAndNil(MouseMarkerForm);
   if HintOwner <> 0 then
     DestroyWindow(HintOwner);
 

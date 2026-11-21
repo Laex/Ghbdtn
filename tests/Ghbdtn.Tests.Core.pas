@@ -1932,6 +1932,10 @@ begin
   Assert.IsTrue(Analysis.NeedsSwitch);
   Assert.AreEqual('с', Analysis.ConvertedText);
   Assert.AreEqual('б', ConvertCharSwap(','));
+  Assert.AreEqual('EN', LangLabel(lkEN, True));
+  Assert.AreEqual('en', LangLabel(lkEN, False));
+  Assert.AreEqual('RU', LangLabel(lkRU, True));
+  Assert.AreEqual('ru', LangLabel(lkRU, False));
 
   Analysis := AnalyzeWord('jhrf', lkEN);
   Assert.IsTrue(Analysis.NeedsSwitch);
@@ -2112,6 +2116,20 @@ begin
     Source.SaveToFile;
     Loaded.LoadFromFile;
     Assert.AreEqual(Integer(chFollow), Integer(Loaded.CaretHintMode));
+    Assert.AreEqual(Integer(mmDot), Integer(Loaded.MouseMarker));
+    Source.MouseMarker := mmText;
+    Source.SaveToFile;
+    Loaded.LoadFromFile;
+    Assert.AreEqual(Integer(mmText), Integer(Loaded.MouseMarker));
+    Source.MouseMarker := mmOff;
+    Source.SaveToFile;
+    Loaded.LoadFromFile;
+    Assert.AreEqual(Integer(mmOff), Integer(Loaded.MouseMarker));
+    Assert.IsTrue(Loaded.HintOnFocusChange);
+    Source.HintOnFocusChange := False;
+    Source.SaveToFile;
+    Loaded.LoadFromFile;
+    Assert.IsFalse(Loaded.HintOnFocusChange);
     Assert.IsTrue(Loaded.IsProcessExcluded('C:\Apps\example.exe'));
   finally
     Loaded.Free;
@@ -2291,6 +2309,8 @@ begin
     Assert.IsTrue(Settings.FixInitialCaps);
     Assert.IsTrue(Settings.PauseInFullscreen);
     Assert.IsTrue(Settings.CaretHintFlash);
+    Assert.AreEqual(Integer(mmDot), Integer(Settings.MouseMarker));
+    Assert.IsTrue(Settings.HintOnFocusChange);
     Assert.IsTrue(Settings.SoundVolume > 0);
   finally
     Settings.Free;

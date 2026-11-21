@@ -12,9 +12,10 @@ uses
   Ghbdtn.Colors,
   Ghbdtn.Layout;
 
-{ APaused adds a contrasting dot in the lower right corner of the badge. }
+{ APaused adds a contrasting dot in the lower right corner of the badge.
+  ACaps selects capital letters (EN) over lowercase ones (en). }
 procedure UpdateTrayIconLang(ATrayIcon: TTrayIcon; ALang: TLangKind;
-  APaused: Boolean = False);
+  APaused: Boolean = False; ACaps: Boolean = False);
 
 implementation
 
@@ -81,7 +82,7 @@ begin
 end;
 
 procedure UpdateTrayIconLang(ATrayIcon: TTrayIcon; ALang: TLangKind;
-  APaused: Boolean);
+  APaused: Boolean; ACaps: Boolean);
 var
   ColorBmp, MaskBmp: TBitmap;
   IconInfo: TIconInfo;
@@ -95,7 +96,7 @@ var
 begin
   if (ATrayIcon = nil) then Exit;
 
-  TextStr := LangKindToString(ALang);
+  TextStr := LangLabel(ALang, ACaps);
 
   // System small icon size.
   IconW := GetSystemMetrics(SM_CXSMICON);

@@ -13,6 +13,8 @@ uses
 
 type
   TCaretHintMode = (chTimed, chFollow, chOff);
+  // The label beside the mouse pointer: a colored dot or the letters en/EN.
+  TMouseMarkerMode = (mmDot, mmText, mmOff);
 
 const
   AllApplicationsLearning = '*';
@@ -100,6 +102,8 @@ type
     FCaretHintMode: TCaretHintMode;
     FCaretHintFlash: Boolean;
     FCaretHintAnimate: Boolean;
+    FMouseMarker: TMouseMarkerMode;
+    FHintOnFocusChange: Boolean;
     function GetConfigFilePath: string;
     function GetSoundOnRussianInput: Boolean;
     procedure SetSoundOnRussianInput(AValue: Boolean);
@@ -129,6 +133,10 @@ type
     procedure SetCaretHintFlash(AValue: Boolean);
     function GetCaretHintAnimate: Boolean;
     procedure SetCaretHintAnimate(AValue: Boolean);
+    function GetMouseMarker: TMouseMarkerMode;
+    procedure SetMouseMarker(AValue: TMouseMarkerMode);
+    function GetHintOnFocusChange: Boolean;
+    procedure SetHintOnFocusChange(AValue: Boolean);
     function GetFixInitialCaps: Boolean;
     procedure SetFixInitialCaps(AValue: Boolean);
     function GetFixCapsLock: Boolean;
@@ -223,6 +231,8 @@ type
     property CaretHintMode: TCaretHintMode read GetCaretHintMode write SetCaretHintMode;
     property CaretHintFlash: Boolean read GetCaretHintFlash write SetCaretHintFlash;
     property CaretHintAnimate: Boolean read GetCaretHintAnimate write SetCaretHintAnimate;
+    property MouseMarker: TMouseMarkerMode read GetMouseMarker write SetMouseMarker;
+    property HintOnFocusChange: Boolean read GetHintOnFocusChange write SetHintOnFocusChange;
     property FixInitialCaps: Boolean read GetFixInitialCaps write SetFixInitialCaps;
     property FixCapsLock: Boolean read GetFixCapsLock write SetFixCapsLock;
     property FixPunctuationSpacing: Boolean read GetFixPunctuationSpacing write SetFixPunctuationSpacing;
@@ -362,6 +372,26 @@ begin
     Result := chTimed;
 end;
 
+function MouseMarkerModeToString(AMode: TMouseMarkerMode): string;
+begin
+  case AMode of
+    mmText: Result := 'text';
+    mmOff: Result := 'off';
+  else
+    Result := 'dot';
+  end;
+end;
+
+function StringToMouseMarkerMode(const AValue: string): TMouseMarkerMode;
+begin
+  if SameText(AValue, 'text') then
+    Result := mmText
+  else if SameText(AValue, 'off') then
+    Result := mmOff
+  else
+    Result := mmDot;
+end;
+
 constructor TSettings.Create(const AConfigPath: string);
 begin
   inherited Create;
@@ -426,6 +456,8 @@ begin
   FCaretHintMode := chTimed;
   FCaretHintFlash := True;
   FCaretHintAnimate := True;
+  FMouseMarker := mmDot;
+  FHintOnFocusChange := True;
   FFixInitialCaps := True;
   FFixCapsLock := True;
   FFixPunctuationSpacing := True;
@@ -823,6 +855,30 @@ begin
   try FCaretHintAnimate := AValue; finally FLock.Release; end;
 end;
 
+function TSettings.GetMouseMarker: TMouseMarkerMode;
+begin
+  FLock.Acquire;
+  try Result := FMouseMarker; finally FLock.Release; end;
+end;
+
+procedure TSettings.SetMouseMarker(AValue: TMouseMarkerMode);
+begin
+  FLock.Acquire;
+  try FMouseMarker := AValue; finally FLock.Release; end;
+end;
+
+function TSettings.GetHintOnFocusChange: Boolean;
+begin
+  FLock.Acquire;
+  try Result := FHintOnFocusChange; finally FLock.Release; end;
+end;
+
+procedure TSettings.SetHintOnFocusChange(AValue: Boolean);
+begin
+  FLock.Acquire;
+  try FHintOnFocusChange := AValue; finally FLock.Release; end;
+end;
+
 procedure TSettings.BoundDictionary(ADict: TDictionary<string, TLearningEntry>);
 var
   Pair: TPair<string, TLearningEntry>;
@@ -1007,6 +1063,9 @@ begin
       FCaretHintMode := StringToCaretHintMode(TextValue);
     ReadBoolean(Root, 'CaretHintFlash', FCaretHintFlash);
     ReadBoolean(Root, 'CaretHintAnimate', FCaretHintAnimate);
+    if Root.TryGetValue<string>('MouseMarker', TextValue) then
+      FMouseMarker := StringToMouseMarkerMode(TextValue);
+    ReadBoolean(Root, 'HintOnFocusChange', FHintOnFocusChange);
     ReadBoolean(Root, 'FixInitialCaps', FFixInitialCaps);
     ReadBoolean(Root, 'FixCapsLock', FFixCapsLock);
     ReadBoolean(Root, 'FixPunctuationSpacing', FFixPunctuationSpacing);
@@ -1231,6 +1290,8 @@ begin
     Root.AddPair('CaretHintMode', CaretHintModeToString(FCaretHintMode));
     Root.AddPair('CaretHintFlash', TJSONBool.Create(FCaretHintFlash));
     Root.AddPair('CaretHintAnimate', TJSONBool.Create(FCaretHintAnimate));
+    Root.AddPair('MouseMarker', MouseMarkerModeToString(FMouseMarker));
+    Root.AddPair('HintOnFocusChange', TJSONBool.Create(FHintOnFocusChange));
     ExclusionsArray := TJSONArray.Create;
     for I := 0 to FExclusions.Count - 1 do
       ExclusionsArray.Add(FExclusions[I]);

@@ -797,6 +797,8 @@ type
     FEarlyLetters: TComboBox;
     FHintFlash: TSwitch;
     FHintAnimate: TSwitch;
+    FMouseMarker: TComboBox;
+    FHintOnFocus: TSwitch;
     FMode: TComboBox;
     FHintMode: TComboBox;
     FDiagnostics: TComboBox;
@@ -1016,7 +1018,11 @@ begin
   FSoundSwitch := AddToggle(ARight, ARightY, 'Звук при переключении');
   FVolume := AddVolume(ARight, ARightY);
   FHintMode := AddCombo(ARight, ARightY, 'Подсказка у каретки',
-    ['На время', 'Следует за кареткой', 'Не показывать']);
+    ['На время', 'Постоянно (следует за кареткой)', 'Не показывать']);
+  FMouseMarker := AddCombo(ARight, ARightY, 'Метка у курсора мыши',
+    ['Цветная точка', 'Буквы en / EN', 'Не показывать']);
+  FHintOnFocus := AddToggle(ARight, ARightY,
+    'Подсказка языка при переходе в другое окно');
 end;
 
 procedure TfrmSettings.BuildAdvanced(ALeft, ARight: TWinControl; var ALeftY,
@@ -1255,6 +1261,8 @@ begin
   FEarlyLetters.ItemIndex := AppSettings.EarlySwitchLetters - EarlyLettersMin;
   SetOn(FHintFlash, AppSettings.CaretHintFlash);
   SetOn(FHintAnimate, AppSettings.CaretHintAnimate);
+  FMouseMarker.ItemIndex := Ord(AppSettings.MouseMarker);
+  SetOn(FHintOnFocus, AppSettings.HintOnFocusChange);
   FMode.ItemIndex := Ord(AppSettings.HeuristicMode);
   FHintMode.ItemIndex := Ord(AppSettings.CaretHintMode);
   FDiagnostics.ItemIndex := Ord(AppSettings.DiagnosticsLevel);
@@ -1286,6 +1294,9 @@ begin
     AppSettings.EarlySwitchLetters := FEarlyLetters.ItemIndex + EarlyLettersMin;
   AppSettings.CaretHintFlash := FHintFlash.Checked;
   AppSettings.CaretHintAnimate := FHintAnimate.Checked;
+  if FMouseMarker.ItemIndex >= 0 then
+    AppSettings.MouseMarker := TMouseMarkerMode(FMouseMarker.ItemIndex);
+  AppSettings.HintOnFocusChange := FHintOnFocus.Checked;
   if FMode.ItemIndex >= 0 then
     AppSettings.HeuristicMode := THeuristicMode(FMode.ItemIndex);
   if FHintMode.ItemIndex >= 0 then

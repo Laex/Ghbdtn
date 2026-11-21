@@ -18,6 +18,11 @@ type
 function GetForegroundKeyboardLayout: HKL;
 function GetForegroundLangKind: TLangKind;
 function LangKindToString(ALang: TLangKind): string;
+{ The badge label: RU and EN in capitals while Caps Lock is on, ru and en
+  otherwise. Any other layout keeps its system name. }
+function LangLabel(ALang: TLangKind; ACaps: Boolean): string;
+{ Whether Caps Lock is switched on (the toggle state, not the key position). }
+function IsCapsLockOn: Boolean;
 function HKLToLangKind(AHKL: HKL): TLangKind;
 function GetHKLForLang(ALang: TLangKind): HKL;
 procedure SwitchForegroundKeyboardLayout(ATargetLang: TLangKind = lkUnknown);
@@ -103,6 +108,18 @@ end;
 function GetForegroundLangKind: TLangKind;
 begin
   Result := HKLToLangKind(GetForegroundKeyboardLayout);
+end;
+
+function LangLabel(ALang: TLangKind; ACaps: Boolean): string;
+begin
+  Result := LangKindToString(ALang);
+  if (ALang <> lkUnknown) and not ACaps then
+    Result := LowerCase(Result);
+end;
+
+function IsCapsLockOn: Boolean;
+begin
+  Result := (GetKeyState(VK_CAPITAL) and 1) <> 0;
 end;
 
 function LangKindToString(ALang: TLangKind): string;

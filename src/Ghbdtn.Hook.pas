@@ -885,6 +885,11 @@ begin
   if CurrentLang = FLastLang then
   begin
     FLastHKL := CurrentHKL;
+    // A new window with the same layout is reported too: the hint shows which
+    // layout the window has.
+    if WindowChanged and AppSettings.HintOnFocusChange and
+       Assigned(FOnLangChange) then
+      FOnLangChange(CurrentLang);
     Exit;
   end;
 

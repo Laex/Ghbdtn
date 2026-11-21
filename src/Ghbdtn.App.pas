@@ -47,6 +47,7 @@ type
     FShownPause: Integer;
     FTrayLang: TLangKind;
     FTrayPaused: Boolean;
+    FTrayCaps: Boolean;
 
     procedure CreateComponents;
     procedure CreateTrayMenu;
@@ -61,6 +62,7 @@ type
     procedure mnuTranslitClick(Sender: TObject);
     procedure SaveSettings;
     procedure OnLangChanged(ALang: TLangKind);
+    procedure CheckCapsLock;
     procedure OnTimerTick(Sender: TObject);
     procedure UpdateMenuItems;
     procedure PopupMenuPopup(Sender: TObject);
@@ -119,6 +121,7 @@ begin
 
   // Initial layout icon.
   OnLangChanged(GetForegroundLangKind);
+  StartMouseMarker;
 {$IFDEF GHBDTN_UPDATE}
   if UpdateCheckRequested then
     StartUpdateCheck;
@@ -211,7 +214,7 @@ begin
     FTrayPaused := Remaining <> 0;
     if FBaseHint <> '' then
     begin
-      UpdateTrayIconLang(FTrayIcon, FTrayLang, FTrayPaused);
+      UpdateTrayIconLang(FTrayIcon, FTrayLang, FTrayPaused, FTrayCaps);
       FBaseHint := FTrayIcon.Hint;
     end;
   end;
@@ -256,11 +259,31 @@ begin
   UpdateMenuItems;
 end;
 
+{ Caps Lock does not change the layout, so the tray badge and the hint at the
+  caret follow it on their own. }
+procedure TfrmApp.CheckCapsLock;
+var
+  Caps: Boolean;
+begin
+  Caps := IsCapsLockOn;
+  if (Caps = FTrayCaps) or (FBaseHint = '') then
+    Exit;
+  FTrayCaps := Caps;
+  UpdateTrayIconLang(FTrayIcon, FTrayLang, FTrayPaused, FTrayCaps);
+  FBaseHint := FTrayIcon.Hint;
+  FShownPause := -2;
+  RefreshPauseIndicators;
+  if FTrayLang = lkUnknown then
+    Exit;
+  ShowCaretHint(FTrayLang);
+end;
+
 procedure TfrmApp.OnTimerTick(Sender: TObject);
 begin
   try
     if HookManager <> nil then
       HookManager.CheckLangChange;
+    CheckCapsLock;
     RefreshPauseIndicators;
   except
     on E: Exception do
@@ -313,7 +336,8 @@ procedure TfrmApp.OnLangChanged(ALang: TLangKind);
 begin
   try
     FTrayLang := ALang;
-    UpdateTrayIconLang(FTrayIcon, ALang, FTrayPaused);
+    FTrayCaps := IsCapsLockOn;
+    UpdateTrayIconLang(FTrayIcon, ALang, FTrayPaused, FTrayCaps);
     FBaseHint := FTrayIcon.Hint;
     FShownPause := -2;
     RefreshPauseIndicators;
