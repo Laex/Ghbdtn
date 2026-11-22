@@ -1030,7 +1030,8 @@ begin
   FHintMode := AddCombo(ARight, ARightY, 'Подсказка у каретки',
     ['На время', 'Постоянно (следует за кареткой)', 'Не показывать']);
   FMouseMarker := AddCombo(ARight, ARightY, 'Метка у курсора мыши',
-    ['Цветная точка', 'Буквы en / EN', 'Не показывать']);
+    ['Цветная точка', 'Буквы en / EN',
+      'Буквы en / EN на фоне', 'Не показывать']);
   FHintOnFocus := AddToggle(ARight, ARightY,
     'Подсказка языка при переходе в другое окно');
   FHintFlash := AddToggle(ARight, ARightY, 'Вспышка подсказки при появлении');

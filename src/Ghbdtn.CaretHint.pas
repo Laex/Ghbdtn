@@ -39,13 +39,23 @@ const
   MarkerAlpha = 210;
   // Polled often so the label keeps up with the mouse.
   MouseMarkerPollMs = 40;
-  // While the dot is catching up with the pointer it is moved every frame.
+  // While the label is catching up with the pointer it is moved every frame.
   MouseMarkerFrameMs = 16;
-  // Time constant of the dot's approach to the pointer: after this long it has
+  // Time constant of the label's approach to the pointer: after this long it has
   // covered about 63 percent of the gap.
   MouseDotLagMs = 55;
   MouseDotMaxStepMs = 100;
   MouseDotSize = 9;
+  // The dot is drawn on a canvas larger than itself so the pulse can grow it
+  // without resizing the window.
+  MouseDotPad = 3;
+  MouseDotCanvas = MouseDotSize + 2 * MouseDotPad;
+  // One beat on a layout change: the dot grows in the old color and shrinks
+  // in the new one.
+  MouseDotPulseMs = 360;
+  MouseDotPulsePeak = 0.55;
+  // Ring thickness while Caps Lock is on.
+  MouseDotRingWidth = 2.5;
   MouseTextWidth = 26;
   MouseTextHeight = 16;
   MouseMarkerOffsetX = 14;
@@ -120,8 +130,18 @@ type
     FStamp: Int64;
     FPlaced: TPoint;
     FFast: Boolean;
+    FDirty: Boolean;
+    FPulseAt: UInt64;
+    FPulseFrom: TLangKind;
+    FBits: TBitmap;
     procedure HideMarker;
     procedure ApplyMode(AMode: TMouseMarkerMode);
+    function PulseState(out AScale: Double; out ALang: TLangKind): Boolean;
+    procedure DrawDot(AScale: Double; ALang: TLangKind);
+    procedure DrawText;
+    procedure DrawLetters;
+    procedure Render(const APlace: TPoint; AMode: TMouseMarkerMode;
+      AScale: Double; ALang: TLangKind);
     function BlockedByFullscreen: Boolean;
     function RefreshState(out AMode: TMouseMarkerMode): Boolean;
     procedure SetTimerRate(AFast: Boolean);
@@ -129,9 +149,9 @@ type
   protected
     procedure CreateParams(var Params: TCreateParams); override;
     procedure CreateWnd; override;
-    procedure Paint; override;
   public
     constructor Create(AOwner: TComponent); override;
+    destructor Destroy; override;
   end;
 
 var
@@ -783,9 +803,9 @@ begin
   ClientWidth := MouseDotSize;
   ClientHeight := MouseDotSize;
   Position := poDesigned;
-  AlphaBlend := True;
-  AlphaBlendValue := MarkerAlpha;
   Visible := False;
+  FBits := TBitmap.Create;
+  FBits.PixelFormat := pf32bit;
   FTimer := TTimer.Create(Self);
   FTimer.Interval := MouseMarkerPollMs;
   FTimer.OnTimer := TimerTick;
@@ -793,12 +813,19 @@ begin
   HandleNeeded;
 end;
 
+destructor TMouseMarkerForm.Destroy;
+begin
+  FBits.Free;
+  inherited;
+end;
+
 procedure TMouseMarkerForm.CreateParams(var Params: TCreateParams);
 begin
   inherited CreateParams(Params);
   Params.Style := WS_POPUP;
   Params.ExStyle := (Params.ExStyle or WS_EX_TOPMOST or WS_EX_TOOLWINDOW or
-    WS_EX_NOACTIVATE or WS_EX_TRANSPARENT) and not WS_EX_APPWINDOW;
+    WS_EX_NOACTIVATE or WS_EX_TRANSPARENT or WS_EX_LAYERED) and
+    not WS_EX_APPWINDOW;
   Params.WndParent := HintOwnerWindow;
 end;
 
@@ -808,26 +835,229 @@ begin
   ApplyNoTaskbarStyle(Handle);
 end;
 
-procedure TMouseMarkerForm.Paint;
+type
+  PQuadRow = ^TQuadRow;
+  TQuadRow = array[0..4095] of TRGBQuad;
+
+{ Anti-aliased disc, or a ring while Caps Lock is on: the edge pixels get partial coverage, which the layered
+  window blends with what is behind it. Colors are premultiplied. }
+procedure TMouseMarkerForm.DrawDot(AScale: Double; ALang: TLangKind);
+var
+  X, Y: Integer;
+  Row: PQuadRow;
+  Rgb: Integer;
+  Red, Green, Blue: Integer;
+  Radius, Center, Dist, Cover, Hole: Double;
+  Alpha: Integer;
+begin
+  Rgb := ColorToRGB(BadgeColorFor(ALang));
+  Red := GetRValue(Rgb);
+  Green := GetGValue(Rgb);
+  Blue := GetBValue(Rgb);
+  Radius := MouseDotSize * AScale / 2;
+  Center := MouseDotCanvas / 2;
+  for Y := 0 to MouseDotCanvas - 1 do
+  begin
+    Row := FBits.ScanLine[Y];
+    for X := 0 to MouseDotCanvas - 1 do
+    begin
+      Dist := Sqrt(Sqr(X + 0.5 - Center) + Sqr(Y + 0.5 - Center));
+      Cover := Radius - Dist + 0.5;
+      if Cover < 0 then
+        Cover := 0
+      else if Cover > 1 then
+        Cover := 1;
+      if FCaps then
+      begin
+        // Caps Lock turns the dot into a ring: the middle is cut out.
+        Hole := Radius - MouseDotRingWidth - Dist + 0.5;
+        if Hole < 0 then
+          Hole := 0
+        else if Hole > 1 then
+          Hole := 1;
+        Cover := Cover * (1 - Hole);
+      end;
+      Alpha := Round(Cover * MarkerAlpha);
+      Row^[X].rgbReserved := Alpha;
+      Row^[X].rgbRed := Red * Alpha div 255;
+      Row^[X].rgbGreen := Green * Alpha div 255;
+      Row^[X].rgbBlue := Blue * Alpha div 255;
+    end;
+  end;
+end;
+
+{ Letters straight on the desktop: the glyph coverage is drawn as white on
+  black, then the fill color over a one-pixel darker shadow is composed from
+  it so the letters read on light and dark backgrounds alike. A full outline
+  would close the gaps between the small glyphs. }
+procedure TMouseMarkerForm.DrawLetters;
 var
   R: TRect;
   Text: string;
+  X, Y: Integer;
+  Row: PQuadRow;
+  Mask: array[0..MouseTextHeight - 1, 0..MouseTextWidth - 1] of Byte;
+  Cover, Edge, Alpha: Integer;
+  Ink, Rim: Integer;
 begin
-  Canvas.Brush.Color := BadgeColorFor(FLang);
-  Canvas.FillRect(ClientRect);
-  if FMode <> mmText then
+  with FBits.Canvas do
+  begin
+    Brush.Style := bsSolid;
+    Brush.Color := clBlack;
+    FillRect(Rect(0, 0, MouseTextWidth, MouseTextHeight));
+    Brush.Style := bsClear;
+    Font.Name := 'Segoe UI';
+    Font.Style := [fsBold];
+    Font.Height := -14;
+    Font.Quality := fqAntialiased;
+    Font.Color := clWhite;
+    Text := LangLabel(FLang, FCaps);
+    R := Rect(0, 0, MouseTextWidth, MouseTextHeight);
+    Winapi.Windows.DrawText(Handle, PChar(Text), Length(Text), R,
+      DT_CENTER or DT_VCENTER or DT_SINGLELINE);
+  end;
+  for Y := 0 to MouseTextHeight - 1 do
+  begin
+    Row := FBits.ScanLine[Y];
+    for X := 0 to MouseTextWidth - 1 do
+      Mask[Y, X] := Row^[X].rgbGreen;
+  end;
+  Ink := ColorToRGB(BadgeColorFor(FLang));
+  Rim := ColorToRGB(DarkerShade(BadgeColorFor(FLang)));
+  for Y := 0 to MouseTextHeight - 1 do
+  begin
+    Row := FBits.ScanLine[Y];
+    for X := 0 to MouseTextWidth - 1 do
+    begin
+      Cover := Mask[Y, X];
+      Edge := 0;
+      if (Y > 0) and (X > 0) then
+        Edge := Mask[Y - 1, X - 1];
+      // Fill over shadow, premultiplied.
+      Alpha := Cover + Edge * (255 - Cover) div 255;
+      Row^[X].rgbRed := (GetRValue(Ink) * Cover +
+        GetRValue(Rim) * (Alpha - Cover)) div 255 * MarkerAlpha div 255;
+      Row^[X].rgbGreen := (GetGValue(Ink) * Cover +
+        GetGValue(Rim) * (Alpha - Cover)) div 255 * MarkerAlpha div 255;
+      Row^[X].rgbBlue := (GetBValue(Ink) * Cover +
+        GetBValue(Rim) * (Alpha - Cover)) div 255 * MarkerAlpha div 255;
+      Row^[X].rgbReserved := Alpha * MarkerAlpha div 255;
+    end;
+  end;
+end;
+
+procedure TMouseMarkerForm.DrawText;
+var
+  R: TRect;
+  Text: string;
+  X, Y: Integer;
+  Row: PQuadRow;
+begin
+  with FBits.Canvas do
+  begin
+    Brush.Style := bsSolid;
+    Brush.Color := BadgeColorFor(FLang);
+    FillRect(Rect(0, 0, MouseTextWidth, MouseTextHeight));
+    Pen.Color := DarkerShade(BadgeColorFor(FLang));
+    Brush.Style := bsClear;
+    Rectangle(0, 0, MouseTextWidth, MouseTextHeight);
+    Font.Name := 'Segoe UI';
+    Font.Style := [fsBold];
+    Font.Height := -11;
+    Font.Color := BadgeInkFor(FLang);
+    Text := LangLabel(FLang, FCaps);
+    R := Rect(0, 0, MouseTextWidth, MouseTextHeight);
+    Winapi.Windows.DrawText(Handle, PChar(Text), Length(Text), R,
+      DT_CENTER or DT_VCENTER or DT_SINGLELINE);
+  end;
+  // GDI leaves the alpha byte empty; the label is uniformly translucent.
+  for Y := 0 to MouseTextHeight - 1 do
+  begin
+    Row := FBits.ScanLine[Y];
+    for X := 0 to MouseTextWidth - 1 do
+    begin
+      Row^[X].rgbRed := Row^[X].rgbRed * MarkerAlpha div 255;
+      Row^[X].rgbGreen := Row^[X].rgbGreen * MarkerAlpha div 255;
+      Row^[X].rgbBlue := Row^[X].rgbBlue * MarkerAlpha div 255;
+      Row^[X].rgbReserved := MarkerAlpha;
+    end;
+  end;
+end;
+
+{ Draws the label into the bitmap and hands it to the window with per-pixel
+  alpha; the same call moves and sizes the window. }
+procedure TMouseMarkerForm.Render(const APlace: TPoint; AMode: TMouseMarkerMode;
+  AScale: Double; ALang: TLangKind);
+var
+  Width, Height: Integer;
+  Dest, Src: TPoint;
+  Size: TSize;
+  Blend: TBlendFunction;
+  ExStyle: NativeInt;
+begin
+  if AMode in [mmText, mmLetters] then
+  begin
+    Width := MouseTextWidth;
+    Height := MouseTextHeight;
+  end
+  else
+  begin
+    Width := MouseDotCanvas;
+    Height := MouseDotCanvas;
+  end;
+  if (FBits.Width <> Width) or (FBits.Height <> Height) then
+    FBits.SetSize(Width, Height);
+  if AMode = mmText then
+    DrawText
+  else if AMode = mmLetters then
+    DrawLetters
+  else
+    DrawDot(AScale, ALang);
+  if AMode in [mmText, mmLetters] then
+    Dest := APlace
+  else
+    Dest := Point(APlace.X - MouseDotPad, APlace.Y - MouseDotPad);
+  Src := Point(0, 0);
+  Size.cx := Width;
+  Size.cy := Height;
+  Blend.BlendOp := AC_SRC_OVER;
+  Blend.BlendFlags := 0;
+  Blend.SourceConstantAlpha := 255;
+  Blend.AlphaFormat := AC_SRC_ALPHA;
+  // The form drops the layered style when AlphaBlend is off, so it is set
+  // here, where the window is about to receive a bitmap.
+  ExStyle := GetWindowLong(Handle, GWL_EXSTYLE);
+  if ExStyle and WS_EX_LAYERED = 0 then
+    SetWindowLong(Handle, GWL_EXSTYLE, ExStyle or WS_EX_LAYERED);
+  UpdateLayeredWindow(Handle, 0, @Dest, @Size, FBits.Canvas.Handle, @Src, 0,
+    @Blend, ULW_ALPHA);
+  SetWindowPos(Handle, HWND_TOPMOST, 0, 0, 0, 0,
+    SWP_NOMOVE or SWP_NOSIZE or SWP_NOACTIVATE or SWP_SHOWWINDOW);
+end;
+
+{ The pulse swells the dot in the previous layout's color for the first half
+  and shrinks it in the current one for the second. }
+function TMouseMarkerForm.PulseState(out AScale: Double;
+  out ALang: TLangKind): Boolean;
+var
+  Phase: Double;
+begin
+  AScale := 1;
+  ALang := FLang;
+  Result := False;
+  if FPulseAt = 0 then
     Exit;
-  Canvas.Pen.Color := DarkerShade(BadgeColorFor(FLang));
-  Canvas.Brush.Style := bsClear;
-  Canvas.Rectangle(0, 0, ClientWidth, ClientHeight);
-  Canvas.Font.Name := 'Segoe UI';
-  Canvas.Font.Style := [fsBold];
-  Canvas.Font.Height := -11;
-  Canvas.Font.Color := BadgeInkFor(FLang);
-  Text := LangLabel(FLang, FCaps);
-  R := ClientRect;
-  DrawText(Canvas.Handle, PChar(Text), Length(Text), R,
-    DT_CENTER or DT_VCENTER or DT_SINGLELINE);
+  Phase := (GetTickCount64 - FPulseAt) / MouseDotPulseMs;
+  if Phase >= 1 then
+  begin
+    FPulseAt := 0;
+    FDirty := True;
+    Exit;
+  end;
+  AScale := 1 + MouseDotPulsePeak * Sin(Pi * Phase);
+  if Phase < 0.5 then
+    ALang := FPulseFrom;
+  Result := True;
 end;
 
 procedure TMouseMarkerForm.HideMarker;
@@ -835,21 +1065,18 @@ begin
   if FShown and HandleAllocated then
     ShowWindow(Handle, SW_HIDE);
   FShown := False;
+  FDirty := True;
+  FPulseAt := 0;
 end;
 
-{ The dot is clipped to a circle; the letters use the whole rectangle. }
 procedure TMouseMarkerForm.ApplyMode(AMode: TMouseMarkerMode);
 begin
   if FModeApplied and (AMode = FMode) then
     Exit;
   FMode := AMode;
   FModeApplied := True;
-  if AMode = mmText then
-    SetWindowRgn(Handle, 0, True)
-  else
-    SetWindowRgn(Handle, CreateEllipticRgn(0, 0, MouseDotSize + 1,
-      MouseDotSize + 1), True);
-  Invalidate;
+  FPulseAt := 0;
+  FDirty := True;
 end;
 
 function TMouseMarkerForm.BlockedByFullscreen: Boolean;
@@ -886,9 +1113,15 @@ begin
   Caps := IsCapsLockOn;
   if (Lang <> FLang) or (Caps <> FCaps) then
   begin
+    if (AMode = mmDot) and AppSettings.CaretHintAnimate and FShown and
+       (Lang <> FLang) and (FLang <> lkUnknown) then
+    begin
+      FPulseFrom := FLang;
+      FPulseAt := GetTickCount64;
+    end;
     FLang := Lang;
     FCaps := Caps;
-    Invalidate;
+    FDirty := True;
   end;
   Result := True;
 end;
@@ -905,17 +1138,18 @@ begin
 end;
 
 { The state checks run at the slow poll rate. The position is read on every
-  tick; in dot mode the dot eases toward the pointer instead of jumping, and
-  the timer runs at frame rate only while it is still moving. }
+  tick; the label eases toward the pointer instead of jumping, and the timer
+  runs at frame rate only while it is still moving. }
 procedure TMouseMarkerForm.TimerTick(Sender: TObject);
 var
   Mode: TMouseMarkerMode;
   Spot: TPoint;
   Tick: UInt64;
   Stamp: Int64;
-  StepMs, Gain, TargetX, TargetY: Double;
-  Width, Height: Integer;
+  StepMs, Gain, TargetX, TargetY, Scale: Double;
   Place: TPoint;
+  PulseLang: TLangKind;
+  Pulsing: Boolean;
 begin
   try
     Tick := GetTickCount64;
@@ -936,7 +1170,7 @@ begin
     TargetX := Spot.X + MouseMarkerOffsetX;
     TargetY := Spot.Y + MouseMarkerOffsetY;
     Stamp := TStopwatch.GetTimeStamp;
-    if (Mode <> mmDot) or not FSmooth or not FShown then
+    if not FSmooth or not FShown then
     begin
       FPosX := TargetX;
       FPosY := TargetY;
@@ -956,26 +1190,17 @@ begin
       end;
     end;
     FStamp := Stamp;
-    FSmooth := Mode = mmDot;
-    SetTimerRate(FSmooth and ((FPosX <> TargetX) or (FPosY <> TargetY)));
-    if Mode = mmText then
-    begin
-      Width := MouseTextWidth;
-      Height := MouseTextHeight;
-    end
-    else
-    begin
-      Width := MouseDotSize;
-      Height := MouseDotSize;
-    end;
+    FSmooth := True;
+    Pulsing := PulseState(Scale, PulseLang);
+    SetTimerRate(Pulsing or
+      (FSmooth and ((FPosX <> TargetX) or (FPosY <> TargetY))));
     Place := Point(Round(FPosX), Round(FPosY));
-    if FShown and (Place = FPlaced) and (ClientWidth = Width) and
-       (ClientHeight = Height) then
+    if FShown and (Place = FPlaced) and not FDirty and not Pulsing then
       Exit;
-    SetWindowPos(Handle, HWND_TOPMOST, Place.X, Place.Y, Width, Height,
-      SWP_NOACTIVATE or SWP_SHOWWINDOW);
+    Render(Place, Mode, Scale, PulseLang);
     FPlaced := Place;
     FShown := True;
+    FDirty := False;
   except
     HideMarker;
   end;

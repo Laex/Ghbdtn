@@ -14,7 +14,7 @@ uses
 type
   TCaretHintMode = (chTimed, chFollow, chOff);
   // The label beside the mouse pointer: a colored dot or the letters en/EN.
-  TMouseMarkerMode = (mmDot, mmText, mmOff);
+  TMouseMarkerMode = (mmDot, mmLetters, mmText, mmOff);
 
 const
   AllApplicationsLearning = '*';
@@ -380,6 +380,7 @@ end;
 function MouseMarkerModeToString(AMode: TMouseMarkerMode): string;
 begin
   case AMode of
+    mmLetters: Result := 'letters';
     mmText: Result := 'text';
     mmOff: Result := 'off';
   else
@@ -389,7 +390,9 @@ end;
 
 function StringToMouseMarkerMode(const AValue: string): TMouseMarkerMode;
 begin
-  if SameText(AValue, 'text') then
+  if SameText(AValue, 'letters') then
+    Result := mmLetters
+  else if SameText(AValue, 'text') then
     Result := mmText
   else if SameText(AValue, 'off') then
     Result := mmOff

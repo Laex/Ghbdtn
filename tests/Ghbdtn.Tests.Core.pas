@@ -2117,6 +2117,10 @@ begin
     Loaded.LoadFromFile;
     Assert.AreEqual(Integer(chFollow), Integer(Loaded.CaretHintMode));
     Assert.AreEqual(Integer(mmDot), Integer(Loaded.MouseMarker));
+    Source.MouseMarker := mmLetters;
+    Source.SaveToFile;
+    Loaded.LoadFromFile;
+    Assert.AreEqual(Integer(mmLetters), Integer(Loaded.MouseMarker));
     Source.MouseMarker := mmText;
     Source.SaveToFile;
     Loaded.LoadFromFile;
