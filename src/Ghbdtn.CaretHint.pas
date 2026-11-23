@@ -1379,6 +1379,97 @@ begin
     FTimer.Interval := MouseMarkerPollMs;
 end;
 
+{ True when every pixel of the cursor bitmap is fully transparent: AND mask
+  all ones and XOR/color data all zero. Players hide the pointer this way by
+  installing a blank cursor. Any failure counts as not blank. }
+function CursorIsBlank(AIcon: HICON): Boolean;
+var
+  Info: TIconInfo;
+  Bmp: tagBITMAP;
+  DC: HDC;
+  Bits: TBytes;
+  Hdr: TBitmapInfo;
+  W, H, Rows, I, Stride: Integer;
+
+  function Fetch(ABitmap: HBITMAP; ARows: Integer): Boolean;
+  begin
+    FillChar(Hdr, SizeOf(Hdr), 0);
+    Hdr.bmiHeader.biSize := SizeOf(Hdr.bmiHeader);
+    Hdr.bmiHeader.biWidth := W;
+    Hdr.bmiHeader.biHeight := -ARows;
+    Hdr.bmiHeader.biPlanes := 1;
+    Hdr.bmiHeader.biBitCount := 32;
+    Hdr.bmiHeader.biCompression := BI_RGB;
+    Stride := W * 4;
+    SetLength(Bits, Stride * ARows);
+    Result := GetDIBits(DC, ABitmap, 0, ARows, Bits, Hdr, DIB_RGB_COLORS) = ARows;
+  end;
+
+begin
+  Result := False;
+  if not GetIconInfo(AIcon, Info) then
+    Exit;
+  DC := GetDC(0);
+  try
+    if GetObject(Info.hbmMask, SizeOf(Bmp), @Bmp) = 0 then
+      Exit;
+    W := Bmp.bmWidth;
+    H := Bmp.bmHeight;
+    if (W <= 0) or (H <= 0) or (W > 256) or (H > 512) then
+      Exit;
+    if Info.hbmColor <> 0 then
+    begin
+      { Color cursor: mask is W x H (AND only). }
+      Rows := H;
+      if not Fetch(Info.hbmMask, Rows) then
+        Exit;
+      for I := 0 to W * Rows - 1 do
+        if Bits[I * 4] <> $FF then
+          Exit;
+      if not Fetch(Info.hbmColor, Rows) then
+        Exit;
+      for I := 0 to W * Rows - 1 do
+        if PCardinal(@Bits[I * 4])^ <> 0 then
+          Exit;
+      Result := True;
+    end
+    else
+    begin
+      { Monochrome cursor: AND mask on top, XOR mask below. }
+      if not Fetch(Info.hbmMask, H) then
+        Exit;
+      Rows := H div 2;
+      for I := 0 to W * Rows - 1 do
+        if Bits[I * 4] <> $FF then
+          Exit;
+      for I := W * Rows to W * Rows * 2 - 1 do
+        if Bits[I * 4] <> 0 then
+          Exit;
+      Result := True;
+    end;
+  finally
+    ReleaseDC(0, DC);
+    if Info.hbmMask <> 0 then
+      DeleteObject(Info.hbmMask);
+    if Info.hbmColor <> 0 then
+      DeleteObject(Info.hbmColor);
+  end;
+end;
+
+{ False while the system pointer is hidden: the show counter is lowered, the
+  cursor is null, or it is a fully transparent cursor. If the query fails the
+  pointer is assumed visible. }
+function PointerVisible: Boolean;
+var
+  Info: TCursorInfo;
+begin
+  Info.cbSize := SizeOf(Info);
+  if not GetCursorInfo(Info) then
+    Exit(True);
+  Result := (Info.flags and CURSOR_SHOWING <> 0) and (Info.hCursor <> 0) and
+    not CursorIsBlank(Info.hCursor);
+end;
+
 { The state checks run at the slow poll rate. The position is read on every
   tick; the label eases toward the pointer instead of jumping, and the timer
   runs at frame rate only while it is still moving. }
@@ -1402,7 +1493,7 @@ begin
       FWantShow := RefreshState(Mode);
       FStateTick := Tick;
     end;
-    if not FWantShow or not GetCursorPos(Spot) then
+    if not FWantShow or not PointerVisible or not GetCursorPos(Spot) then
     begin
       HideMarker;
       FSmooth := False;
