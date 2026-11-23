@@ -213,7 +213,10 @@ begin
     Result := nil;
 end;
 
-function RectFromBoundingArray(Rects: PSafeArray; out APoint: TPoint): Boolean;
+{ Reads the first rectangle of a bounding-rectangles array (left, top, width,
+  height as doubles). ARightEdge returns its right edge instead of the left. }
+function RectFromBoundingArray(Rects: PSafeArray; ARightEdge: Boolean;
+  out APoint: TPoint): Boolean;
 var
   Lower, Upper, Coord, Index: Integer;
   Value: Double;
@@ -238,24 +241,115 @@ begin
   end;
   if (Values[2] <= 0) and (Values[3] <= 0) then
     Exit;
-  APoint := Point(Round(Values[0]), Round(Values[1]));
+  if ARightEdge then
+    APoint := Point(Round(Values[0] + Values[2]), Round(Values[1]))
+  else
+    APoint := Point(Round(Values[0]), Round(Values[1]));
   Result := True;
 end;
 
-function TryGetAutomationCaret(out APoint: TPoint): Boolean;
+function RangePoint(const ARange: IUIAutomationTextRange; ARightEdge: Boolean;
+  out APoint: TPoint): Boolean;
 type
   TGetBoundingRectangles = function(This: Pointer; out Rects: PSafeArray): HRESULT; stdcall;
 var
-  Client: IUIAutomation;
-  Element: IUIAutomationElement;
+  Rects: PSafeArray;
+  VTable: PPointer;
+  ReadRects: TGetBoundingRectangles;
+begin
+  Result := False;
+  APoint := Point(0, 0);
+  if ARange = nil then
+    Exit;
+  // The imported signature passes SAFEARRAY by value. The real method returns
+  // a SAFEARRAY pointer, so call that slot directly.
+  VTable := PPointer(Pointer(ARange)^);
+  Inc(VTable, 10);
+  ReadRects := TGetBoundingRectangles(VTable^);
+  Rects := nil;
+  try
+    if Failed(ReadRects(Pointer(ARange), Rects)) then
+      Exit;
+    Result := RectFromBoundingArray(Rects, ARightEdge, APoint);
+  finally
+    if Rects <> nil then
+      SafeArrayDestroy(Rects);
+  end;
+end;
+
+{ TextPattern2 gives the caret range directly. }
+function TryCaretRangePoint(const AElement: IUIAutomationElement;
+  out APoint: TPoint): Boolean;
+var
   Pattern: IUIAutomationTextPattern2;
   Range: IUIAutomationTextRange;
   PatternPtr: Pointer;
   PatternId: TGUID;
   Active: BOOL;
-  Rects: PSafeArray;
-  VTable: PPointer;
-  ReadRects: TGetBoundingRectangles;
+begin
+  Result := False;
+  APoint := Point(0, 0);
+  PatternId := IUIAutomationTextPattern2;
+  PatternPtr := nil;
+  if Failed(AElement.GetCurrentPatternAs(UIA_TextPattern2Id, @PatternId, PatternPtr)) or
+     (PatternPtr = nil) then
+    Exit;
+  Pointer(Pattern) := PatternPtr;
+  Range := nil;
+  if Failed(Pattern.GetCaretRange(Active, Range)) or (Range = nil) then
+    Exit;
+  Result := RangePoint(Range, False, APoint);
+end;
+
+{ Elements with TextPattern only (Chromium and Electron fields, terminals):
+  the selection is a collapsed range at the caret and has no rectangle of its
+  own. The character after it gives the caret's left edge; at the end of the
+  text the character before it gives the right edge. }
+function TrySelectionPoint(const AElement: IUIAutomationElement;
+  out APoint: TPoint): Boolean;
+var
+  Pattern: IUIAutomationTextPattern;
+  Ranges: IUIAutomationTextRangeArray;
+  Selection, Probe: IUIAutomationTextRange;
+  PatternPtr: Pointer;
+  PatternId: TGUID;
+  Count, Moved: Integer;
+begin
+  Result := False;
+  APoint := Point(0, 0);
+  PatternId := IUIAutomationTextPattern;
+  PatternPtr := nil;
+  if Failed(AElement.GetCurrentPatternAs(UIA_TextPatternId, @PatternId, PatternPtr)) or
+     (PatternPtr = nil) then
+    Exit;
+  Pointer(Pattern) := PatternPtr;
+  Ranges := nil;
+  if Failed(Pattern.GetSelection(Ranges)) or (Ranges = nil) then
+    Exit;
+  if Failed(Ranges.get_Length(Count)) or (Count < 1) then
+    Exit;
+  Selection := nil;
+  if Failed(Ranges.GetElement(0, Selection)) or (Selection = nil) then
+    Exit;
+  Probe := nil;
+  if Succeeded(Selection.Clone(Probe)) and (Probe <> nil) and
+     Succeeded(Probe.ExpandToEnclosingUnit(TextUnit_Character)) and
+     RangePoint(Probe, False, APoint) then
+    Exit(True);
+  Probe := nil;
+  if Failed(Selection.Clone(Probe)) or (Probe = nil) then
+    Exit;
+  Moved := 0;
+  if Failed(Probe.MoveEndpointByUnit(TextPatternRangeEndpoint_Start,
+    TextUnit_Character, -1, Moved)) or (Moved = 0) then
+    Exit;
+  Result := RangePoint(Probe, True, APoint);
+end;
+
+function TryGetAutomationCaret(out APoint: TPoint): Boolean;
+var
+  Client: IUIAutomation;
+  Element: IUIAutomationElement;
 begin
   Result := False;
   APoint := Point(0, 0);
@@ -265,29 +359,8 @@ begin
   Element := nil;
   if Failed(Client.GetFocusedElement(Element)) or (Element = nil) then
     Exit;
-  PatternId := IUIAutomationTextPattern2;
-  PatternPtr := nil;
-  if Failed(Element.GetCurrentPatternAs(UIA_TextPattern2Id, @PatternId, PatternPtr)) or
-     (PatternPtr = nil) then
-    Exit;
-  Pointer(Pattern) := PatternPtr;
-  Range := nil;
-  if Failed(Pattern.GetCaretRange(Active, Range)) or (Range = nil) then
-    Exit;
-  // The imported signature passes SAFEARRAY by value. The real method returns
-  // a SAFEARRAY pointer, so call that slot directly.
-  VTable := PPointer(Pointer(Range)^);
-  Inc(VTable, 10);
-  ReadRects := TGetBoundingRectangles(VTable^);
-  Rects := nil;
-  try
-    if Failed(ReadRects(Pointer(Range), Rects)) then
-      Exit;
-    Result := RectFromBoundingArray(Rects, APoint);
-  finally
-    if Rects <> nil then
-      SafeArrayDestroy(Rects);
-  end;
+  Result := TryCaretRangePoint(Element, APoint) or
+    TrySelectionPoint(Element, APoint);
 end;
 
 var
