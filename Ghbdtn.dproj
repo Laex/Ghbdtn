@@ -115,6 +115,8 @@
         <DCCReference Include="src\Ghbdtn.Sound.pas"/>
         <DCCReference Include="src\Ghbdtn.Settings.pas"/>
         <DCCReference Include="src\Ghbdtn.AutoStart.pas"/>
+        <DCCReference Include="src\Ghbdtn.LayoutIndicator.pas"/>
+        <DCCReference Include="src\Ghbdtn.MarkerAnimation.pas"/>
         <DCCReference Include="src\Ghbdtn.Buffer.pas"/>
         <DCCReference Include="src\Ghbdtn.KeyState.pas"/>
         <DCCReference Include="src\Ghbdtn.Learning.pas"/>

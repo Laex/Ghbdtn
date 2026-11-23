@@ -18,6 +18,7 @@ uses
   Ghbdtn.Settings,
   Ghbdtn.Sound,
   Ghbdtn.AutoStart,
+  Ghbdtn.LayoutIndicator,
   Ghbdtn.CaretHint,
   Ghbdtn.Translit,
   Ghbdtn.SettingsForm,
@@ -96,6 +97,7 @@ begin
     'diagnostics.log'), AppSettings.DiagnosticsLevel);
   InitializeSound;
   ApplyAutoStart(AppSettings.AutoStart);
+  ApplySystemIndicatorHidden(AppSettings.HideSystemIndicator);
 
   CreateTrayMenu;
   UpdateMenuItems;
@@ -139,6 +141,8 @@ begin
     FreeAndNil(HookManager);
   end;
   ShutdownSound;
+  // The system indicator comes back when the program closes.
+  ApplySystemIndicatorHidden(False);
   inherited Destroy;
 end;
 

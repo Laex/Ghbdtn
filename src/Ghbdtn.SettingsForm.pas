@@ -30,6 +30,7 @@ uses
   Ghbdtn.Learning,
   Ghbdtn.Settings,
   Ghbdtn.AutoStart,
+  Ghbdtn.LayoutIndicator,
   Ghbdtn.Hook,
   Ghbdtn.Sound,
   Ghbdtn.Update;
@@ -800,6 +801,9 @@ type
     FEarlyLetters: TComboBox;
     FHintFlash: TSwitch;
     FHintAnimate: TSwitch;
+    FMarkerAnimate: TSwitch;
+    FMarkerAnimation: TComboBox;
+    FHideIndicator: TSwitch;
     FMouseMarker: TComboBox;
     FHintOnFocus: TSwitch;
     FMode: TComboBox;
@@ -1036,6 +1040,12 @@ begin
     'Подсказка языка при переходе в другое окно');
   FHintFlash := AddToggle(ARight, ARightY, 'Вспышка подсказки при появлении');
   FHintAnimate := AddToggle(ARight, ARightY, 'Анимация размера подсказки');
+  FMarkerAnimate := AddToggle(ARight, ARightY, 'Анимация метки у курсора мыши');
+  FMarkerAnimation := AddCombo(ARight, ARightY, 'Вид анимации метки',
+    ['Увеличение и уменьшение', 'Уменьшение и увеличение',
+      'Квадрат с поворотом', 'Переворот монеты', 'Волна', 'Плавная смена цвета']);
+  FHideIndicator := AddToggle(ARight, ARightY,
+    'Скрывать системный индикатор раскладки');
 
   AddSection(ARight, ARightY, 'Поведение');
   FSelectionLayout := AddToggle(ARight, ARightY,
@@ -1217,6 +1227,9 @@ begin
   FEarlyLetters.ItemIndex := AppSettings.EarlySwitchLetters - EarlyLettersMin;
   SetOn(FHintFlash, AppSettings.CaretHintFlash);
   SetOn(FHintAnimate, AppSettings.CaretHintAnimate);
+  SetOn(FMarkerAnimate, AppSettings.MouseMarkerAnimate);
+  FMarkerAnimation.ItemIndex := Ord(AppSettings.MouseMarkerAnimation);
+  SetOn(FHideIndicator, AppSettings.HideSystemIndicator);
   FMouseMarker.ItemIndex := Ord(AppSettings.MouseMarker);
   SetOn(FHintOnFocus, AppSettings.HintOnFocusChange);
   FMode.ItemIndex := Ord(AppSettings.HeuristicMode);
@@ -1250,6 +1263,11 @@ begin
     AppSettings.EarlySwitchLetters := FEarlyLetters.ItemIndex + EarlyLettersMin;
   AppSettings.CaretHintFlash := FHintFlash.Checked;
   AppSettings.CaretHintAnimate := FHintAnimate.Checked;
+  AppSettings.MouseMarkerAnimate := FMarkerAnimate.Checked;
+  if FMarkerAnimation.ItemIndex >= 0 then
+    AppSettings.MouseMarkerAnimation :=
+      TMarkerAnimation(FMarkerAnimation.ItemIndex);
+  AppSettings.HideSystemIndicator := FHideIndicator.Checked;
   if FMouseMarker.ItemIndex >= 0 then
     AppSettings.MouseMarker := TMouseMarkerMode(FMouseMarker.ItemIndex);
   AppSettings.HintOnFocusChange := FHintOnFocus.Checked;
@@ -1261,6 +1279,7 @@ begin
     AppSettings.DiagnosticsLevel := TDiagnosticsLevel(FDiagnostics.ItemIndex);
   AppSettings.SaveToFile;
   ApplyAutoStart(AppSettings.AutoStart);
+  ApplySystemIndicatorHidden(AppSettings.HideSystemIndicator);
   ConfigureDiagnostics(DiagnosticsLogPath, AppSettings.DiagnosticsLevel);
 end;
 

@@ -10,6 +10,8 @@ uses
   Ghbdtn.Sound in 'src\Ghbdtn.Sound.pas',
   Ghbdtn.Settings in 'src\Ghbdtn.Settings.pas',
   Ghbdtn.AutoStart in 'src\Ghbdtn.AutoStart.pas',
+  Ghbdtn.LayoutIndicator in 'src\Ghbdtn.LayoutIndicator.pas',
+  Ghbdtn.MarkerAnimation in 'src\Ghbdtn.MarkerAnimation.pas',
   Ghbdtn.Buffer in 'src\Ghbdtn.Buffer.pas',
   Ghbdtn.KeyState in 'src\Ghbdtn.KeyState.pas',
   Ghbdtn.Learning in 'src\Ghbdtn.Learning.pas',

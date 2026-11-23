@@ -8,6 +8,7 @@ uses
   System.Classes,
   System.IOUtils,
   System.SyncObjs,
+  System.Win.Registry,
   DUnitX.TestFramework,
   Ghbdtn.Layout,
   Ghbdtn.Analyzer,
@@ -24,6 +25,8 @@ uses
   Ghbdtn.Learning,
   Ghbdtn.Phrase,
   Ghbdtn.Settings,
+  Ghbdtn.LayoutIndicator,
+  Ghbdtn.MarkerAnimation,
   Ghbdtn.InputQueue,
   Ghbdtn.Fixer,
   Ghbdtn.Diagnostics,
@@ -275,12 +278,58 @@ type
   end;
 
   [TestFixture]
+  TMarkerAnimationTests = class
+  public
+    [Test]
+    procedure RestsOutsideThePhaseRangeInEveryStyle;
+    [Test]
+    procedure SwellGrowsInTheOldColorAndEndsInTheNewOne;
+    [Test]
+    procedure ShrinkDipsBelowTheRestingSize;
+    [Test]
+    procedure SquareTurnsAQuarterAndComesBackToACircle;
+    [Test]
+    procedure FlipGoesEdgeOnWhileTheColorChanges;
+    [Test]
+    procedure WaveSpreadsARingInTheNewColor;
+    [Test]
+    procedure FadeBlendsColorsWithoutLosingTheSize;
+    [Test]
+    procedure EveryStyleHasADuration;
+  end;
+
+  [TestFixture]
+  TLayoutIndicatorTests = class
+  private
+    function ReadEnabled: Integer;
+    procedure WriteEnabled(AValue: Integer);
+    procedure DeleteScratchKeys;
+  public
+    [Setup]
+    procedure PrepareScratchKeys;
+    [TearDown]
+    procedure RemoveScratchKeys;
+    [Test]
+    procedure HidesTheIndicatorAndRemovesTheValueWhenRestoring;
+    [Test]
+    procedure RestoresTheValueFoundBeforeHiding;
+    [Test]
+    procedure KeepsTheFirstBackupWhenHidingTwice;
+    [Test]
+    procedure RestoreWithoutHidingChangesNothing;
+  end;
+
+  [TestFixture]
   TSettingsTests = class
   public
     [Test]
     procedure SavesAndLoadsAllSettings;
     [Test]
     procedure PersistsInitialCapsOptions;
+    [Test]
+    procedure PersistsMarkerAnimationStyle;
+    [Test]
+    procedure PersistsHideSystemIndicator;
     [Test]
     procedure KeepsDefaultsForKeysMissingFromConfig;
     [Test]
@@ -2297,6 +2346,240 @@ begin
   end;
 end;
 
+const
+  ScratchRoot = 'Software\Ghbdtn.Tests';
+  ScratchIndicatorKey = ScratchRoot + '\Indicator';
+  ScratchBackupKey = ScratchRoot + '\Backup';
+
+function TLayoutIndicatorTests.ReadEnabled: Integer;
+var
+  Reg: TRegistry;
+begin
+  Result := -1;
+  Reg := TRegistry.Create(KEY_READ);
+  try
+    Reg.RootKey := HKEY_CURRENT_USER;
+    if Reg.OpenKey(ScratchIndicatorKey, False) then
+    try
+      if Reg.ValueExists('Enabled') then
+        Result := Reg.ReadInteger('Enabled');
+    finally
+      Reg.CloseKey;
+    end;
+  finally
+    Reg.Free;
+  end;
+end;
+
+procedure TLayoutIndicatorTests.WriteEnabled(AValue: Integer);
+var
+  Reg: TRegistry;
+begin
+  Reg := TRegistry.Create(KEY_READ or KEY_WRITE);
+  try
+    Reg.RootKey := HKEY_CURRENT_USER;
+    Assert.IsTrue(Reg.OpenKey(ScratchIndicatorKey, True));
+    Reg.WriteInteger('Enabled', AValue);
+    Reg.CloseKey;
+  finally
+    Reg.Free;
+  end;
+end;
+
+procedure TLayoutIndicatorTests.DeleteScratchKeys;
+var
+  Reg: TRegistry;
+begin
+  Reg := TRegistry.Create(KEY_READ or KEY_WRITE);
+  try
+    Reg.RootKey := HKEY_CURRENT_USER;
+    Reg.DeleteKey(ScratchIndicatorKey);
+    Reg.DeleteKey(ScratchBackupKey);
+    Reg.DeleteKey(ScratchRoot);
+  finally
+    Reg.Free;
+  end;
+end;
+
+procedure TLayoutIndicatorTests.PrepareScratchKeys;
+begin
+  DeleteScratchKeys;
+end;
+
+procedure TLayoutIndicatorTests.RemoveScratchKeys;
+begin
+  DeleteScratchKeys;
+end;
+
+procedure TLayoutIndicatorTests.HidesTheIndicatorAndRemovesTheValueWhenRestoring;
+begin
+  ApplyIndicatorState(True, ScratchIndicatorKey, ScratchBackupKey);
+  Assert.AreEqual(0, ReadEnabled);
+  ApplyIndicatorState(False, ScratchIndicatorKey, ScratchBackupKey);
+  Assert.AreEqual(-1, ReadEnabled);
+end;
+
+procedure TLayoutIndicatorTests.RestoresTheValueFoundBeforeHiding;
+begin
+  WriteEnabled(1);
+  ApplyIndicatorState(True, ScratchIndicatorKey, ScratchBackupKey);
+  Assert.AreEqual(0, ReadEnabled);
+  ApplyIndicatorState(False, ScratchIndicatorKey, ScratchBackupKey);
+  Assert.AreEqual(1, ReadEnabled);
+end;
+
+procedure TLayoutIndicatorTests.KeepsTheFirstBackupWhenHidingTwice;
+begin
+  WriteEnabled(1);
+  ApplyIndicatorState(True, ScratchIndicatorKey, ScratchBackupKey);
+  ApplyIndicatorState(True, ScratchIndicatorKey, ScratchBackupKey);
+  Assert.AreEqual(0, ReadEnabled);
+  ApplyIndicatorState(False, ScratchIndicatorKey, ScratchBackupKey);
+  Assert.AreEqual(1, ReadEnabled);
+end;
+
+procedure TLayoutIndicatorTests.RestoreWithoutHidingChangesNothing;
+begin
+  WriteEnabled(0);
+  ApplyIndicatorState(False, ScratchIndicatorKey, ScratchBackupKey);
+  Assert.AreEqual(0, ReadEnabled);
+end;
+
+procedure TMarkerAnimationTests.RestsOutsideThePhaseRangeInEveryStyle;
+var
+  Style: TMarkerAnimation;
+  Phase: Double;
+  Frame: TDotFrame;
+begin
+  for Style := Low(TMarkerAnimation) to High(TMarkerAnimation) do
+    for Phase in [-0.2, 1.0, 1.5] do
+    begin
+      Frame := ComputeDotFrame(Style, Phase);
+      Assert.AreEqual(1.0, Frame.ScaleX, 0.0001);
+      Assert.AreEqual(1.0, Frame.ScaleY, 0.0001);
+      Assert.AreEqual(0.0, Frame.Roundness, 0.0001);
+      Assert.AreEqual(0.0, Frame.Angle, 0.0001);
+      Assert.IsTrue(Frame.Wave < 0);
+      Assert.AreEqual(1.0, Frame.Mix, 0.0001);
+    end;
+end;
+
+procedure TMarkerAnimationTests.SwellGrowsInTheOldColorAndEndsInTheNewOne;
+begin
+  Assert.AreEqual(0.0, ComputeDotFrame(maSwell, 0.25).Mix, 0.0001);
+  Assert.AreEqual(1.0, ComputeDotFrame(maSwell, 0.75).Mix, 0.0001);
+  Assert.IsTrue(ComputeDotFrame(maSwell, 0.5).ScaleX > 1.4);
+  Assert.IsTrue(ComputeDotFrame(maSwell, 0.05).ScaleX < 1.2);
+end;
+
+procedure TMarkerAnimationTests.ShrinkDipsBelowTheRestingSize;
+begin
+  Assert.IsTrue(ComputeDotFrame(maShrink, 0.5).ScaleX < 0.6);
+  Assert.AreEqual(0.0, ComputeDotFrame(maShrink, 0.25).Mix, 0.0001);
+  Assert.AreEqual(1.0, ComputeDotFrame(maShrink, 0.75).Mix, 0.0001);
+end;
+
+procedure TMarkerAnimationTests.SquareTurnsAQuarterAndComesBackToACircle;
+var
+  Middle, Early, Late: TDotFrame;
+begin
+  Early := ComputeDotFrame(maSquare, 0.01);
+  Middle := ComputeDotFrame(maSquare, 0.5);
+  Late := ComputeDotFrame(maSquare, 0.99);
+  Assert.IsTrue(Early.Roundness < 0.05);
+  Assert.AreEqual(0.9, Middle.Roundness, 0.0001);
+  Assert.AreEqual(Pi / 4, Middle.Angle, 0.0001);
+  Assert.AreEqual(0.5, Middle.Mix, 0.0001);
+  Assert.IsTrue(Late.Roundness < 0.05);
+  Assert.AreEqual(Pi / 2, Late.Angle, 0.01);
+end;
+
+procedure TMarkerAnimationTests.FlipGoesEdgeOnWhileTheColorChanges;
+var
+  Edge: TDotFrame;
+begin
+  Edge := ComputeDotFrame(maFlip, 0.5);
+  Assert.IsTrue(Edge.ScaleX < 0.1);
+  Assert.AreEqual(1.0, Edge.ScaleY, 0.0001);
+  Assert.AreEqual(0.0, ComputeDotFrame(maFlip, 0.4).Mix, 0.0001);
+  Assert.AreEqual(1.0, ComputeDotFrame(maFlip, 0.6).Mix, 0.0001);
+end;
+
+procedure TMarkerAnimationTests.WaveSpreadsARingInTheNewColor;
+var
+  Frame: TDotFrame;
+begin
+  Frame := ComputeDotFrame(maWave, 0.3);
+  Assert.AreEqual(0.3, Frame.Wave, 0.0001);
+  Assert.AreEqual(1.0, Frame.Mix, 0.0001);
+end;
+
+procedure TMarkerAnimationTests.FadeBlendsColorsWithoutLosingTheSize;
+var
+  Frame: TDotFrame;
+begin
+  Frame := ComputeDotFrame(maFade, 0.5);
+  Assert.AreEqual(0.5, Frame.Mix, 0.0001);
+  Assert.IsTrue(Frame.ScaleX >= 1);
+  Assert.IsTrue(ComputeDotFrame(maFade, 0.1).Mix < Frame.Mix);
+end;
+
+procedure TMarkerAnimationTests.EveryStyleHasADuration;
+var
+  Style: TMarkerAnimation;
+begin
+  for Style := Low(TMarkerAnimation) to High(TMarkerAnimation) do
+    Assert.IsTrue(MarkerAnimationMs(Style) >= 300);
+end;
+
+procedure TSettingsTests.PersistsMarkerAnimationStyle;
+var
+  Path: string;
+  Settings: TSettings;
+begin
+  Path := UniqueTestPath('marker-style');
+  Settings := TSettings.Create(Path);
+  try
+    Assert.AreEqual(Integer(maSwell), Integer(Settings.MouseMarkerAnimation));
+    Settings.MouseMarkerAnimation := maSquare;
+    Settings.SaveToFile;
+  finally
+    Settings.Free;
+  end;
+  Settings := TSettings.Create(Path);
+  try
+    Settings.LoadFromFile;
+    Assert.AreEqual(Integer(maSquare), Integer(Settings.MouseMarkerAnimation));
+  finally
+    Settings.Free;
+    TFile.Delete(Path);
+  end;
+end;
+
+procedure TSettingsTests.PersistsHideSystemIndicator;
+var
+  Path: string;
+  Settings: TSettings;
+begin
+  Path := UniqueTestPath('hide-indicator');
+  Settings := TSettings.Create(Path);
+  try
+    Assert.IsFalse(Settings.HideSystemIndicator);
+    Settings.HideSystemIndicator := True;
+    Settings.SaveToFile;
+  finally
+    Settings.Free;
+  end;
+  Settings := TSettings.Create(Path);
+  try
+    Settings.LoadFromFile;
+    Assert.IsTrue(Settings.HideSystemIndicator);
+  finally
+    Settings.Free;
+    TFile.Delete(Path);
+  end;
+end;
+
 procedure TSettingsTests.KeepsDefaultsForKeysMissingFromConfig;
 var
   Path: string;
@@ -3600,6 +3883,8 @@ initialization
   TDUnitX.RegisterTestFixture(TInputBufferTests);
   TDUnitX.RegisterTestFixture(TLeftShiftStateTests);
   TDUnitX.RegisterTestFixture(TSettingsTests);
+  TDUnitX.RegisterTestFixture(TLayoutIndicatorTests);
+  TDUnitX.RegisterTestFixture(TMarkerAnimationTests);
   TDUnitX.RegisterTestFixture(TInputQueueTests);
   TDUnitX.RegisterTestFixture(TDiagnosticsTests);
   TDUnitX.RegisterTestFixture(TSingleInstanceTests);

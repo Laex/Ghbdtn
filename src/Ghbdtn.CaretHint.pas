@@ -33,6 +33,7 @@ uses
   Winapi.UIAutomation,
   Ghbdtn.Colors,
   Ghbdtn.Fullscreen,
+  Ghbdtn.MarkerAnimation,
   Ghbdtn.Settings;
 
 const
@@ -48,16 +49,16 @@ const
   MouseDotSize = 9;
   // The dot is drawn on a canvas larger than itself so the pulse can grow it
   // without resizing the window.
-  MouseDotPad = 3;
+  MouseDotPad = 6;
   MouseDotCanvas = MouseDotSize + 2 * MouseDotPad;
-  // One beat on a layout change: the dot grows in the old color and shrinks
-  // in the new one.
-  MouseDotPulseMs = 360;
-  MouseDotPulsePeak = 0.55;
+  // Width of the ring that spreads out in the wave animation.
+  MouseDotWaveWidth = 1.6;
   // Ring thickness while Caps Lock is on.
   MouseDotRingWidth = 2.5;
   MouseTextWidth = 26;
   MouseTextHeight = 16;
+  // Room around the label for the animations that enlarge it.
+  MouseTextPad = 8;
   MouseMarkerOffsetX = 14;
   MouseMarkerOffsetY = 16;
   MarkerFullscreenCheckMs = 500;
@@ -65,6 +66,10 @@ const
   HintHeight = 22;
   HintVisibleMs = 1100;
   HintFlashMs = 380;
+  // While the appear flash or size animation runs the timer ticks once per
+  // frame; otherwise it only polls.
+  HintFrameMs = 16;
+  HintPollMs = 80;
   // A bare message without a layout is dark gray; the layouts use the colors
   // of the tray badge.
   HintNoteColor = $00464646;
@@ -133,15 +138,23 @@ type
     FDirty: Boolean;
     FPulseAt: UInt64;
     FPulseFrom: TLangKind;
+    FPulseStyle: TMarkerAnimation;
     FBits: TBitmap;
+    // The label at rest in the previous and in the current layout; the window
+    // bitmap is composed from them.
+    FLabelFrom: TBitmap;
+    FLabelTo: TBitmap;
     procedure HideMarker;
     procedure ApplyMode(AMode: TMouseMarkerMode);
-    function PulseState(out AScale: Double; out ALang: TLangKind): Boolean;
-    procedure DrawDot(AScale: Double; ALang: TLangKind);
-    procedure DrawText;
-    procedure DrawLetters;
+    function PulseState(out AFrame: TDotFrame): Boolean;
+    procedure DrawDot(const AFrame: TDotFrame);
+    procedure DrawText(ATarget: TBitmap; ALang: TLangKind);
+    procedure DrawLetters(ATarget: TBitmap; ALang: TLangKind);
+    procedure DrawLabel(AMode: TMouseMarkerMode; ATarget: TBitmap;
+      ALang: TLangKind);
+    procedure ComposeLabel(AMode: TMouseMarkerMode; const AFrame: TDotFrame);
     procedure Render(const APlace: TPoint; AMode: TMouseMarkerMode;
-      AScale: Double; ALang: TLangKind);
+      const AFrame: TDotFrame);
     function BlockedByFullscreen: Boolean;
     function RefreshState(out AMode: TMouseMarkerMode): Boolean;
     procedure SetTimerRate(AFast: Boolean);
@@ -551,9 +564,12 @@ begin
   OnMouseMove := FormMouseMove;
   OnMouseUp := FormMouseUp;
   FTimer := TTimer.Create(Self);
-  FTimer.Interval := 80;
+  FTimer.Interval := HintPollMs;
   FTimer.OnTimer := TimerTick;
   FTimer.Enabled := True;
+  // The badge is repainted on every animation frame; drawing it off screen
+  // avoids the flicker of fill, border and text appearing one after another.
+  DoubleBuffered := True;
   HandleNeeded;
 end;
 
@@ -596,9 +612,12 @@ begin
     (GetTickCount64 - FAppearedAt < HintFlashMs);
 end;
 
+{ Size of the badge relative to its normal size: it starts 28 percent larger
+  and settles with an ease-out curve. }
 function TCaretHintForm.HintScale: Double;
 var
   Elapsed: UInt64;
+  Left: Double;
 begin
   Result := 1;
   if not AppSettings.CaretHintAnimate or (FAppearedAt = 0) then
@@ -606,7 +625,8 @@ begin
   Elapsed := GetTickCount64 - FAppearedAt;
   if Elapsed >= HintFlashMs then
     Exit;
-  Result := 1 + 0.28 * (1 - Elapsed / HintFlashMs);
+  Left := 1 - Elapsed / HintFlashMs;
+  Result := 1 + 0.28 * Left * Left;
 end;
 
 function TCaretHintForm.HintBaseColor: TColor;
@@ -674,7 +694,7 @@ procedure TCaretHintForm.PlaceAtCaret;
 var
   Caret: TPoint;
   Scale: Double;
-  Width, Height, ExtraX, ExtraY: Integer;
+  BaseWidth, Width, Height, ExtraX, ExtraY: Integer;
 begin
   if FDragging then
     Caret := FDragAnchor
@@ -696,13 +716,15 @@ begin
   Canvas.Font.Name := 'Segoe UI';
   Canvas.Font.Style := [fsBold];
   Canvas.Font.Height := -14;
-  ExtraX := Canvas.TextWidth(Caption) + 16;
-  if ExtraX < HintWidth then
-    ExtraX := HintWidth;
-  Width := Round(ExtraX * Scale);
+  BaseWidth := Canvas.TextWidth(Caption) + 16;
+  if BaseWidth < HintWidth then
+    BaseWidth := HintWidth;
+  Width := Round(BaseWidth * Scale);
   Height := Round(HintHeight * Scale);
-  ExtraX := (Width - ExtraX) div 2;
-  ExtraY := (Height - HintHeight) div 2;
+  // The badge grows around its normal center; rounding the half difference
+  // keeps the center from stepping by a pixel at alternate sizes.
+  ExtraX := Round((Width - BaseWidth) / 2);
+  ExtraY := Round((Height - HintHeight) / 2);
   ApplyNoTaskbarStyle(Handle);
   SetWindowPos(Handle, HWND_TOPMOST,
     Caret.X + AppSettings.CaretHintOffsetX - ExtraX,
@@ -753,6 +775,9 @@ begin
       FAppearedAt := FShownAt
     else
       FAppearedAt := 0;
+    // Start the frame rate now instead of at the next slow poll.
+    if FAppearedAt <> 0 then
+      FTimer.Interval := HintFrameMs;
   end;
   if AppSettings.CaretHintMode = chTimed then
     FHideAt := GetTickCount64 + HintVisibleMs
@@ -793,7 +818,19 @@ begin
 end;
 
 procedure TCaretHintForm.TimerTick(Sender: TObject);
+var
+  Animating: Boolean;
+  Rate: Cardinal;
 begin
+  Animating := (AppSettings.CaretHintFlash or AppSettings.CaretHintAnimate) and
+    (FAppearedAt <> 0) and
+    (GetTickCount64 - FAppearedAt < UInt64(HintFlashMs + HintFrameMs));
+  if Animating then
+    Rate := HintFrameMs
+  else
+    Rate := HintPollMs;
+  if FTimer.Interval <> Rate then
+    FTimer.Interval := Rate;
   if AppSettings.CaretHintMode = chOff then
   begin
     if FShown then
@@ -813,9 +850,7 @@ begin
     end;
     Exit;
   end;
-  if (AppSettings.CaretHintFlash or AppSettings.CaretHintAnimate) and
-     (FAppearedAt <> 0) and
-     (GetTickCount64 - FAppearedAt < HintFlashMs + 100) then
+  if Animating then
   begin
     PlaceAtCaret;
     Invalidate;
@@ -879,6 +914,12 @@ begin
   Visible := False;
   FBits := TBitmap.Create;
   FBits.PixelFormat := pf32bit;
+  FLabelFrom := TBitmap.Create;
+  FLabelFrom.PixelFormat := pf32bit;
+  FLabelFrom.SetSize(MouseTextWidth, MouseTextHeight);
+  FLabelTo := TBitmap.Create;
+  FLabelTo.PixelFormat := pf32bit;
+  FLabelTo.SetSize(MouseTextWidth, MouseTextHeight);
   FTimer := TTimer.Create(Self);
   FTimer.Interval := MouseMarkerPollMs;
   FTimer.OnTimer := TimerTick;
@@ -888,6 +929,8 @@ end;
 
 destructor TMouseMarkerForm.Destroy;
 begin
+  FLabelTo.Free;
+  FLabelFrom.Free;
   FBits.Free;
   inherited;
 end;
@@ -912,43 +955,77 @@ type
   PQuadRow = ^TQuadRow;
   TQuadRow = array[0..4095] of TRGBQuad;
 
-{ Anti-aliased disc, or a ring while Caps Lock is on: the edge pixels get partial coverage, which the layered
-  window blends with what is behind it. Colors are premultiplied. }
-procedure TMouseMarkerForm.DrawDot(AScale: Double; ALang: TLangKind);
+function Clamp01(AValue: Double): Double;
+begin
+  if AValue < 0 then
+    Result := 0
+  else if AValue > 1 then
+    Result := 1
+  else
+    Result := AValue;
+end;
+
+function MixChannel(AFrom, ATo: Integer; AMix: Double): Integer;
+begin
+  Result := Round(AFrom + (ATo - AFrom) * AMix);
+end;
+
+{ Anti-aliased dot, or a ring while Caps Lock is on: the edge pixels get
+  partial coverage, which the layered window blends with what is behind it.
+  The shape is a rounded square of half-width R whose corner radius shrinks
+  from R (a circle) to nothing, drawn through a rotation and a per-axis scale;
+  distances are measured before the scale and brought back with its mean.
+  Colors are premultiplied. }
+procedure TMouseMarkerForm.DrawDot(const AFrame: TDotFrame);
 var
   X, Y: Integer;
   Row: PQuadRow;
-  Rgb: Integer;
+  FromRgb, ToRgb: Integer;
   Red, Green, Blue: Integer;
-  Radius, Center, Dist, Cover, Hole: Double;
+  Half, Corner, Inner, Center, Px, Py, Qx, Qy, Dx, Dy, Dist, Wave,
+    Cover, Hole, Factor, SinA, CosA, RingR: Double;
   Alpha: Integer;
 begin
-  Rgb := ColorToRGB(BadgeColorFor(ALang));
-  Red := GetRValue(Rgb);
-  Green := GetGValue(Rgb);
-  Blue := GetBValue(Rgb);
-  Radius := MouseDotSize * AScale / 2;
+  FromRgb := ColorToRGB(BadgeColorFor(FPulseFrom));
+  ToRgb := ColorToRGB(BadgeColorFor(FLang));
+  Red := MixChannel(GetRValue(FromRgb), GetRValue(ToRgb), AFrame.Mix);
+  Green := MixChannel(GetGValue(FromRgb), GetGValue(ToRgb), AFrame.Mix);
+  Blue := MixChannel(GetBValue(FromRgb), GetBValue(ToRgb), AFrame.Mix);
+  Half := MouseDotSize / 2;
+  Corner := Half * (1 - AFrame.Roundness);
+  Inner := Half - Corner;
   Center := MouseDotCanvas / 2;
+  Factor := (AFrame.ScaleX + AFrame.ScaleY) / 2;
+  SinA := Sin(AFrame.Angle);
+  CosA := Cos(AFrame.Angle);
+  RingR := Half + (Center - 0.5 - MouseDotWaveWidth - Half) *
+    Clamp01(AFrame.Wave);
   for Y := 0 to MouseDotCanvas - 1 do
   begin
     Row := FBits.ScanLine[Y];
     for X := 0 to MouseDotCanvas - 1 do
     begin
-      Dist := Sqrt(Sqr(X + 0.5 - Center) + Sqr(Y + 0.5 - Center));
-      Cover := Radius - Dist + 0.5;
-      if Cover < 0 then
-        Cover := 0
-      else if Cover > 1 then
-        Cover := 1;
+      Px := X + 0.5 - Center;
+      Py := Y + 0.5 - Center;
+      Qx := (Px * CosA + Py * SinA) / AFrame.ScaleX;
+      Qy := (Py * CosA - Px * SinA) / AFrame.ScaleY;
+      Dx := Abs(Qx) - Inner;
+      Dy := Abs(Qy) - Inner;
+      Dist := (Sqrt(Sqr(Max(Dx, 0.0)) + Sqr(Max(Dy, 0.0))) +
+        Min(Max(Dx, Dy), 0.0) - Corner) * Factor;
+      Cover := Clamp01(0.5 - Dist);
       if FCaps then
       begin
         // Caps Lock turns the dot into a ring: the middle is cut out.
-        Hole := Radius - MouseDotRingWidth - Dist + 0.5;
-        if Hole < 0 then
-          Hole := 0
-        else if Hole > 1 then
-          Hole := 1;
+        Hole := Clamp01(-Dist - MouseDotRingWidth + 0.5);
         Cover := Cover * (1 - Hole);
+      end;
+      if AFrame.Wave >= 0 then
+      begin
+        Wave := Clamp01(0.5 - (Abs(Sqrt(Sqr(Px) + Sqr(Py)) - RingR) -
+          MouseDotWaveWidth / 2)) * (1 - AFrame.Wave);
+        if Wave > Cover then
+          Cover := Wave;
       end;
       Alpha := Round(Cover * MarkerAlpha);
       Row^[X].rgbReserved := Alpha;
@@ -963,7 +1040,7 @@ end;
   black, then the fill color over a one-pixel darker shadow is composed from
   it so the letters read on light and dark backgrounds alike. A full outline
   would close the gaps between the small glyphs. }
-procedure TMouseMarkerForm.DrawLetters;
+procedure TMouseMarkerForm.DrawLetters(ATarget: TBitmap; ALang: TLangKind);
 var
   R: TRect;
   Text: string;
@@ -973,7 +1050,7 @@ var
   Cover, Edge, Alpha: Integer;
   Ink, Rim: Integer;
 begin
-  with FBits.Canvas do
+  with ATarget.Canvas do
   begin
     Brush.Style := bsSolid;
     Brush.Color := clBlack;
@@ -984,22 +1061,22 @@ begin
     Font.Height := -14;
     Font.Quality := fqAntialiased;
     Font.Color := clWhite;
-    Text := LangLabel(FLang, FCaps);
+    Text := LangLabel(ALang, FCaps);
     R := Rect(0, 0, MouseTextWidth, MouseTextHeight);
     Winapi.Windows.DrawText(Handle, PChar(Text), Length(Text), R,
       DT_CENTER or DT_VCENTER or DT_SINGLELINE);
   end;
   for Y := 0 to MouseTextHeight - 1 do
   begin
-    Row := FBits.ScanLine[Y];
+    Row := ATarget.ScanLine[Y];
     for X := 0 to MouseTextWidth - 1 do
       Mask[Y, X] := Row^[X].rgbGreen;
   end;
-  Ink := ColorToRGB(BadgeColorFor(FLang));
-  Rim := ColorToRGB(DarkerShade(BadgeColorFor(FLang)));
+  Ink := ColorToRGB(BadgeColorFor(ALang));
+  Rim := ColorToRGB(DarkerShade(BadgeColorFor(ALang)));
   for Y := 0 to MouseTextHeight - 1 do
   begin
-    Row := FBits.ScanLine[Y];
+    Row := ATarget.ScanLine[Y];
     for X := 0 to MouseTextWidth - 1 do
     begin
       Cover := Mask[Y, X];
@@ -1019,26 +1096,26 @@ begin
   end;
 end;
 
-procedure TMouseMarkerForm.DrawText;
+procedure TMouseMarkerForm.DrawText(ATarget: TBitmap; ALang: TLangKind);
 var
   R: TRect;
   Text: string;
   X, Y: Integer;
   Row: PQuadRow;
 begin
-  with FBits.Canvas do
+  with ATarget.Canvas do
   begin
     Brush.Style := bsSolid;
-    Brush.Color := BadgeColorFor(FLang);
+    Brush.Color := BadgeColorFor(ALang);
     FillRect(Rect(0, 0, MouseTextWidth, MouseTextHeight));
-    Pen.Color := DarkerShade(BadgeColorFor(FLang));
+    Pen.Color := DarkerShade(BadgeColorFor(ALang));
     Brush.Style := bsClear;
     Rectangle(0, 0, MouseTextWidth, MouseTextHeight);
     Font.Name := 'Segoe UI';
     Font.Style := [fsBold];
     Font.Height := -11;
-    Font.Color := BadgeInkFor(FLang);
-    Text := LangLabel(FLang, FCaps);
+    Font.Color := BadgeInkFor(ALang);
+    Text := LangLabel(ALang, FCaps);
     R := Rect(0, 0, MouseTextWidth, MouseTextHeight);
     Winapi.Windows.DrawText(Handle, PChar(Text), Length(Text), R,
       DT_CENTER or DT_VCENTER or DT_SINGLELINE);
@@ -1046,7 +1123,7 @@ begin
   // GDI leaves the alpha byte empty; the label is uniformly translucent.
   for Y := 0 to MouseTextHeight - 1 do
   begin
-    Row := FBits.ScanLine[Y];
+    Row := ATarget.ScanLine[Y];
     for X := 0 to MouseTextWidth - 1 do
     begin
       Row^[X].rgbRed := Row^[X].rgbRed * MarkerAlpha div 255;
@@ -1057,10 +1134,106 @@ begin
   end;
 end;
 
+procedure TMouseMarkerForm.DrawLabel(AMode: TMouseMarkerMode;
+  ATarget: TBitmap; ALang: TLangKind);
+begin
+  if AMode = mmText then
+    DrawText(ATarget, ALang)
+  else
+    DrawLetters(ATarget, ALang);
+end;
+
+{ Composes the label of the current frame in the window bitmap, which is
+  larger than the label so that it can grow. The label at rest is drawn in the
+  colors of the previous and the current layout, blended by the frame's Mix,
+  and resampled with the frame's scale around the center; at scale 1 every
+  pixel lands exactly on one source pixel, so the label stays sharp. }
+procedure TMouseMarkerForm.ComposeLabel(AMode: TMouseMarkerMode;
+  const AFrame: TDotFrame);
+var
+  X, Y, X0, Y0, K, N: Integer;
+  RowFrom, RowTo, Dest: PQuadRow;
+  Pa, Pb: PRGBQuad;
+  U, V, Fx, Fy: Double;
+  Acc: array[0..3] of Double;
+  Src: array[0..3] of PRGBQuad;
+  Weights: array[0..3] of Double;
+  DestWidth, DestHeight: Integer;
+
+  function Pixel(AX, AY: Integer): PRGBQuad;
+  begin
+    if (AX < 0) or (AY < 0) or (AX >= MouseTextWidth) or
+       (AY >= MouseTextHeight) then
+      Exit(nil);
+    Result := @PQuadRow(FLabelTo.ScanLine[AY])^[AX];
+  end;
+
+begin
+  DrawLabel(AMode, FLabelTo, FLang);
+  if AFrame.Mix < 1 then
+  begin
+    DrawLabel(AMode, FLabelFrom, FPulseFrom);
+    for Y := 0 to MouseTextHeight - 1 do
+    begin
+      RowFrom := FLabelFrom.ScanLine[Y];
+      RowTo := FLabelTo.ScanLine[Y];
+      for X := 0 to MouseTextWidth - 1 do
+      begin
+        Pa := @RowFrom^[X];
+        Pb := @RowTo^[X];
+        Pb^.rgbRed := MixChannel(Pa^.rgbRed, Pb^.rgbRed, AFrame.Mix);
+        Pb^.rgbGreen := MixChannel(Pa^.rgbGreen, Pb^.rgbGreen, AFrame.Mix);
+        Pb^.rgbBlue := MixChannel(Pa^.rgbBlue, Pb^.rgbBlue, AFrame.Mix);
+        Pb^.rgbReserved := MixChannel(Pa^.rgbReserved, Pb^.rgbReserved,
+          AFrame.Mix);
+      end;
+    end;
+  end;
+  DestWidth := MouseTextWidth + 2 * MouseTextPad;
+  DestHeight := MouseTextHeight + 2 * MouseTextPad;
+  for Y := 0 to DestHeight - 1 do
+  begin
+    Dest := FBits.ScanLine[Y];
+    V := (Y + 0.5 - DestHeight / 2) / AFrame.ScaleY + MouseTextHeight / 2 - 0.5;
+    Y0 := Floor(V);
+    Fy := V - Y0;
+    for X := 0 to DestWidth - 1 do
+    begin
+      U := (X + 0.5 - DestWidth / 2) / AFrame.ScaleX + MouseTextWidth / 2 - 0.5;
+      X0 := Floor(U);
+      Fx := U - X0;
+      Src[0] := Pixel(X0, Y0);
+      Src[1] := Pixel(X0 + 1, Y0);
+      Src[2] := Pixel(X0, Y0 + 1);
+      Src[3] := Pixel(X0 + 1, Y0 + 1);
+      Weights[0] := (1 - Fx) * (1 - Fy);
+      Weights[1] := Fx * (1 - Fy);
+      Weights[2] := (1 - Fx) * Fy;
+      Weights[3] := Fx * Fy;
+      for K := 0 to 3 do
+        Acc[K] := 0;
+      // Pixels outside the label are transparent; the colors are
+      // premultiplied, so a weighted sum is a correct blend.
+      for N := 0 to 3 do
+        if Src[N] <> nil then
+        begin
+          Acc[0] := Acc[0] + Src[N]^.rgbBlue * Weights[N];
+          Acc[1] := Acc[1] + Src[N]^.rgbGreen * Weights[N];
+          Acc[2] := Acc[2] + Src[N]^.rgbRed * Weights[N];
+          Acc[3] := Acc[3] + Src[N]^.rgbReserved * Weights[N];
+        end;
+      Dest^[X].rgbBlue := Round(Acc[0]);
+      Dest^[X].rgbGreen := Round(Acc[1]);
+      Dest^[X].rgbRed := Round(Acc[2]);
+      Dest^[X].rgbReserved := Round(Acc[3]);
+    end;
+  end;
+end;
+
 { Draws the label into the bitmap and hands it to the window with per-pixel
   alpha; the same call moves and sizes the window. }
 procedure TMouseMarkerForm.Render(const APlace: TPoint; AMode: TMouseMarkerMode;
-  AScale: Double; ALang: TLangKind);
+  const AFrame: TDotFrame);
 var
   Width, Height: Integer;
   Dest, Src: TPoint;
@@ -1070,26 +1243,22 @@ var
 begin
   if AMode in [mmText, mmLetters] then
   begin
-    Width := MouseTextWidth;
-    Height := MouseTextHeight;
+    Width := MouseTextWidth + 2 * MouseTextPad;
+    Height := MouseTextHeight + 2 * MouseTextPad;
+    Dest := Point(APlace.X - MouseTextPad, APlace.Y - MouseTextPad);
   end
   else
   begin
     Width := MouseDotCanvas;
     Height := MouseDotCanvas;
+    Dest := Point(APlace.X - MouseDotPad, APlace.Y - MouseDotPad);
   end;
   if (FBits.Width <> Width) or (FBits.Height <> Height) then
     FBits.SetSize(Width, Height);
-  if AMode = mmText then
-    DrawText
-  else if AMode = mmLetters then
-    DrawLetters
-  else
-    DrawDot(AScale, ALang);
   if AMode in [mmText, mmLetters] then
-    Dest := APlace
+    ComposeLabel(AMode, AFrame)
   else
-    Dest := Point(APlace.X - MouseDotPad, APlace.Y - MouseDotPad);
+    DrawDot(AFrame);
   Src := Point(0, 0);
   Size.cx := Width;
   Size.cy := Height;
@@ -1108,28 +1277,24 @@ begin
     SWP_NOMOVE or SWP_NOSIZE or SWP_NOACTIVATE or SWP_SHOWWINDOW);
 end;
 
-{ The pulse swells the dot in the previous layout's color for the first half
-  and shrinks it in the current one for the second. }
-function TMouseMarkerForm.PulseState(out AScale: Double;
-  out ALang: TLangKind): Boolean;
+{ The frame of the running layout-change animation, or the resting dot when
+  none runs. The style is fixed when the animation starts. }
+function TMouseMarkerForm.PulseState(out AFrame: TDotFrame): Boolean;
 var
   Phase: Double;
 begin
-  AScale := 1;
-  ALang := FLang;
+  AFrame := RestingDotFrame;
   Result := False;
   if FPulseAt = 0 then
     Exit;
-  Phase := (GetTickCount64 - FPulseAt) / MouseDotPulseMs;
+  Phase := (GetTickCount64 - FPulseAt) / MarkerAnimationMs(FPulseStyle);
   if Phase >= 1 then
   begin
     FPulseAt := 0;
     FDirty := True;
     Exit;
   end;
-  AScale := 1 + MouseDotPulsePeak * Sin(Pi * Phase);
-  if Phase < 0.5 then
-    ALang := FPulseFrom;
+  AFrame := ComputeDotFrame(FPulseStyle, Phase);
   Result := True;
 end;
 
@@ -1186,10 +1351,14 @@ begin
   Caps := IsCapsLockOn;
   if (Lang <> FLang) or (Caps <> FCaps) then
   begin
-    if (AMode = mmDot) and AppSettings.CaretHintAnimate and FShown and
+    if AppSettings.MouseMarkerAnimate and FShown and
        (Lang <> FLang) and (FLang <> lkUnknown) then
     begin
       FPulseFrom := FLang;
+      FPulseStyle := AppSettings.MouseMarkerAnimation;
+      // The square and the wave are shapes of the dot; a label swells instead.
+      if (AMode <> mmDot) and (FPulseStyle in [maSquare, maWave]) then
+        FPulseStyle := maSwell;
       FPulseAt := GetTickCount64;
     end;
     FLang := Lang;
@@ -1219,9 +1388,9 @@ var
   Spot: TPoint;
   Tick: UInt64;
   Stamp: Int64;
-  StepMs, Gain, TargetX, TargetY, Scale: Double;
+  StepMs, Gain, TargetX, TargetY: Double;
   Place: TPoint;
-  PulseLang: TLangKind;
+  Frame: TDotFrame;
   Pulsing: Boolean;
 begin
   try
@@ -1264,13 +1433,13 @@ begin
     end;
     FStamp := Stamp;
     FSmooth := True;
-    Pulsing := PulseState(Scale, PulseLang);
+    Pulsing := PulseState(Frame);
     SetTimerRate(Pulsing or
       (FSmooth and ((FPosX <> TargetX) or (FPosY <> TargetY))));
     Place := Point(Round(FPosX), Round(FPosY));
     if FShown and (Place = FPlaced) and not FDirty and not Pulsing then
       Exit;
-    Render(Place, Mode, Scale, PulseLang);
+    Render(Place, Mode, Frame);
     FPlaced := Place;
     FShown := True;
     FDirty := False;

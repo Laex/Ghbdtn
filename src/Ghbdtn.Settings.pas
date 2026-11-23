@@ -15,6 +15,14 @@ type
   TCaretHintMode = (chTimed, chFollow, chOff);
   // The label beside the mouse pointer: a colored dot or the letters en/EN.
   TMouseMarkerMode = (mmDot, mmLetters, mmText, mmOff);
+  { How the dot beside the mouse pointer reacts to a layout change:
+    maSwell      grows in the old color, shrinks in the new one;
+    maShrink     shrinks in the old color, grows back in the new one;
+    maSquare     turns into a square, rotates by 90 degrees, becomes a dot;
+    maFlip       turns edge-on like a coin and comes back in the new color;
+    maWave       takes the new color at once and sends out a fading ring;
+    maFade       changes color smoothly without a change of size. }
+  TMarkerAnimation = (maSwell, maShrink, maSquare, maFlip, maWave, maFade);
 
 const
   AllApplicationsLearning = '*';
@@ -102,6 +110,9 @@ type
     FCaretHintMode: TCaretHintMode;
     FCaretHintFlash: Boolean;
     FCaretHintAnimate: Boolean;
+    FMouseMarkerAnimate: Boolean;
+    FMouseMarkerAnimation: TMarkerAnimation;
+    FHideSystemIndicator: Boolean;
     FCaretAutomationBackground: Boolean;
     FMouseMarker: TMouseMarkerMode;
     FHintOnFocusChange: Boolean;
@@ -134,6 +145,12 @@ type
     procedure SetCaretHintFlash(AValue: Boolean);
     function GetCaretHintAnimate: Boolean;
     procedure SetCaretHintAnimate(AValue: Boolean);
+    function GetMouseMarkerAnimate: Boolean;
+    procedure SetMouseMarkerAnimate(AValue: Boolean);
+    function GetMouseMarkerAnimation: TMarkerAnimation;
+    procedure SetMouseMarkerAnimation(AValue: TMarkerAnimation);
+    function GetHideSystemIndicator: Boolean;
+    procedure SetHideSystemIndicator(AValue: Boolean);
     function GetCaretAutomationBackground: Boolean;
     procedure SetCaretAutomationBackground(AValue: Boolean);
     function GetMouseMarker: TMouseMarkerMode;
@@ -234,6 +251,10 @@ type
     property CaretHintMode: TCaretHintMode read GetCaretHintMode write SetCaretHintMode;
     property CaretHintFlash: Boolean read GetCaretHintFlash write SetCaretHintFlash;
     property CaretHintAnimate: Boolean read GetCaretHintAnimate write SetCaretHintAnimate;
+    property MouseMarkerAnimate: Boolean read GetMouseMarkerAnimate write SetMouseMarkerAnimate;
+    property MouseMarkerAnimation: TMarkerAnimation read GetMouseMarkerAnimation
+      write SetMouseMarkerAnimation;
+    property HideSystemIndicator: Boolean read GetHideSystemIndicator write SetHideSystemIndicator;
     property CaretAutomationBackground: Boolean read GetCaretAutomationBackground
       write SetCaretAutomationBackground;
     property MouseMarker: TMouseMarkerMode read GetMouseMarker write SetMouseMarker;
@@ -400,6 +421,25 @@ begin
     Result := mmDot;
 end;
 
+const
+  MarkerAnimationNames: array[TMarkerAnimation] of string =
+    ('swell', 'shrink', 'square', 'flip', 'wave', 'fade');
+
+function MarkerAnimationToString(AValue: TMarkerAnimation): string;
+begin
+  Result := MarkerAnimationNames[AValue];
+end;
+
+function StringToMarkerAnimation(const AValue: string): TMarkerAnimation;
+var
+  Item: TMarkerAnimation;
+begin
+  for Item := Low(TMarkerAnimation) to High(TMarkerAnimation) do
+    if SameText(AValue, MarkerAnimationNames[Item]) then
+      Exit(Item);
+  Result := maSwell;
+end;
+
 constructor TSettings.Create(const AConfigPath: string);
 begin
   inherited Create;
@@ -464,6 +504,9 @@ begin
   FCaretHintMode := chTimed;
   FCaretHintFlash := True;
   FCaretHintAnimate := True;
+  FMouseMarkerAnimate := True;
+  FMouseMarkerAnimation := maSwell;
+  FHideSystemIndicator := False;
   FCaretAutomationBackground := True;
   FMouseMarker := mmDot;
   FHintOnFocusChange := True;
@@ -864,6 +907,42 @@ begin
   try FCaretHintAnimate := AValue; finally FLock.Release; end;
 end;
 
+function TSettings.GetMouseMarkerAnimate: Boolean;
+begin
+  FLock.Acquire;
+  try Result := FMouseMarkerAnimate; finally FLock.Release; end;
+end;
+
+procedure TSettings.SetMouseMarkerAnimate(AValue: Boolean);
+begin
+  FLock.Acquire;
+  try FMouseMarkerAnimate := AValue; finally FLock.Release; end;
+end;
+
+function TSettings.GetMouseMarkerAnimation: TMarkerAnimation;
+begin
+  FLock.Acquire;
+  try Result := FMouseMarkerAnimation; finally FLock.Release; end;
+end;
+
+procedure TSettings.SetMouseMarkerAnimation(AValue: TMarkerAnimation);
+begin
+  FLock.Acquire;
+  try FMouseMarkerAnimation := AValue; finally FLock.Release; end;
+end;
+
+function TSettings.GetHideSystemIndicator: Boolean;
+begin
+  FLock.Acquire;
+  try Result := FHideSystemIndicator; finally FLock.Release; end;
+end;
+
+procedure TSettings.SetHideSystemIndicator(AValue: Boolean);
+begin
+  FLock.Acquire;
+  try FHideSystemIndicator := AValue; finally FLock.Release; end;
+end;
+
 function TSettings.GetCaretAutomationBackground: Boolean;
 begin
   FLock.Acquire;
@@ -1084,6 +1163,12 @@ begin
       FCaretHintMode := StringToCaretHintMode(TextValue);
     ReadBoolean(Root, 'CaretHintFlash', FCaretHintFlash);
     ReadBoolean(Root, 'CaretHintAnimate', FCaretHintAnimate);
+    // A config without its own key follows the hint animation setting.
+    FMouseMarkerAnimate := FCaretHintAnimate;
+    ReadBoolean(Root, 'MouseMarkerAnimate', FMouseMarkerAnimate);
+    if Root.TryGetValue<string>('MouseMarkerAnimation', TextValue) then
+      FMouseMarkerAnimation := StringToMarkerAnimation(TextValue);
+    ReadBoolean(Root, 'HideSystemIndicator', FHideSystemIndicator);
     ReadBoolean(Root, 'CaretAutomationBackground', FCaretAutomationBackground);
     if Root.TryGetValue<string>('MouseMarker', TextValue) then
       FMouseMarker := StringToMouseMarkerMode(TextValue);
@@ -1312,6 +1397,10 @@ begin
     Root.AddPair('CaretHintMode', CaretHintModeToString(FCaretHintMode));
     Root.AddPair('CaretHintFlash', TJSONBool.Create(FCaretHintFlash));
     Root.AddPair('CaretHintAnimate', TJSONBool.Create(FCaretHintAnimate));
+    Root.AddPair('MouseMarkerAnimate', TJSONBool.Create(FMouseMarkerAnimate));
+    Root.AddPair('MouseMarkerAnimation',
+      MarkerAnimationToString(FMouseMarkerAnimation));
+    Root.AddPair('HideSystemIndicator', TJSONBool.Create(FHideSystemIndicator));
     Root.AddPair('CaretAutomationBackground',
       TJSONBool.Create(FCaretAutomationBackground));
     Root.AddPair('MouseMarker', MouseMarkerModeToString(FMouseMarker));
