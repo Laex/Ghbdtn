@@ -9,6 +9,7 @@ uses
   System.SyncObjs,
   Ghbdtn.Analyzer,
   Ghbdtn.Diagnostics,
+  Ghbdtn.Hotkeys,
   Ghbdtn.Learning;
 
 type
@@ -116,6 +117,9 @@ type
     FCaretAutomationBackground: Boolean;
     FMouseMarker: TMouseMarkerMode;
     FHintOnFocusChange: Boolean;
+    FHotkeys: THotkeyMap;
+    function GetHotkeys: THotkeyMap;
+    procedure SetHotkeys(const AValue: THotkeyMap);
     function GetConfigFilePath: string;
     function GetSoundOnRussianInput: Boolean;
     procedure SetSoundOnRussianInput(AValue: Boolean);
@@ -236,6 +240,9 @@ type
     procedure RecordLearning(const AWord: string; AStrongSignal: Boolean);
     procedure LearnNeverSwitch(const AWord: string);
     procedure ResetLearning;
+    function TryFindHotkey(const AHotkey: THotkey;
+      out AAction: TAppAction): Boolean;
+    property Hotkeys: THotkeyMap read GetHotkeys write SetHotkeys;
     property ConfigFilePath: string read GetConfigFilePath;
     property SoundOnRussianInput: Boolean read GetSoundOnRussianInput write SetSoundOnRussianInput;
     property SoundOnSwitch: Boolean read GetSoundOnSwitch write SetSoundOnSwitch;
@@ -524,6 +531,7 @@ begin
   FRightCtrlSwitchEnabled := False;
   FEarlySwitchEnabled := False;
   FEarlySwitchLetters := EarlyLettersDefault;
+  FHotkeys := DefaultHotkeys;
   FCaseFixKept.Clear;
   FExclusions.Clear;
   FExclusions.Add('cmd.exe');
@@ -534,6 +542,29 @@ begin
   FLearning.Clear;
   FAppLearning.Clear;
   FLearningStamp := 0;
+end;
+
+function TSettings.GetHotkeys: THotkeyMap;
+begin
+  FLock.Acquire;
+  try Result := FHotkeys; finally FLock.Release; end;
+end;
+
+procedure TSettings.SetHotkeys(const AValue: THotkeyMap);
+begin
+  FLock.Acquire;
+  try FHotkeys := AValue; finally FLock.Release; end;
+end;
+
+function TSettings.TryFindHotkey(const AHotkey: THotkey;
+  out AAction: TAppAction): Boolean;
+begin
+  FLock.Acquire;
+  try
+    Result := TryFindHotkeyAction(FHotkeys, AHotkey, AAction);
+  finally
+    FLock.Release;
+  end;
 end;
 
 function TSettings.GetConfigFilePath: string;
@@ -1120,6 +1151,33 @@ begin
     AValue := Value;
 end;
 
+{ A command the config does not mention keeps its default key unless the
+  config gave that key to another command. }
+procedure ReadHotkeys(ARoot: TJSONObject; var AMap: THotkeyMap);
+var
+  Section: TJSONObject;
+  Action: TAppAction;
+  Hotkey: THotkey;
+  Text: string;
+begin
+  if not (ARoot.Values['Hotkeys'] is TJSONObject) then
+    Exit;
+  Section := TJSONObject(ARoot.Values['Hotkeys']);
+  for Action := Low(TAppAction) to High(TAppAction) do
+    if Section.TryGetValue<string>(AppActionIds[Action], Text) and
+       TryTextToHotkey(Text, Hotkey) then
+      AssignHotkey(AMap, Action, Hotkey);
+end;
+
+function HotkeysToJson(const AMap: THotkeyMap): TJSONObject;
+var
+  Action: TAppAction;
+begin
+  Result := TJSONObject.Create;
+  for Action := Low(TAppAction) to High(TAppAction) do
+    Result.AddPair(AppActionIds[Action], HotkeyToText(AMap[Action]));
+end;
+
 function TSettings.LoadJsonFile(const APath: string): Boolean;
 var
   Parsed: TJSONValue;
@@ -1189,6 +1247,7 @@ begin
     ReadInteger(Root, 'EarlySwitchLetters', FEarlySwitchLetters);
     FEarlySwitchLetters := Min(Max(FEarlySwitchLetters, EarlyLettersMin),
       EarlyLettersMax);
+    ReadHotkeys(Root, FHotkeys);
 
     ArrayValue := Root.Values['CaseFixKept'] as TJSONArray;
     if ArrayValue <> nil then
@@ -1425,6 +1484,7 @@ begin
       TJSONBool.Create(FRightCtrlSwitchEnabled));
     Root.AddPair('EarlySwitchEnabled', TJSONBool.Create(FEarlySwitchEnabled));
     Root.AddPair('EarlySwitchLetters', TJSONNumber.Create(FEarlySwitchLetters));
+    Root.AddPair('Hotkeys', HotkeysToJson(FHotkeys));
     KeptArray := TJSONArray.Create;
     for I := 0 to FCaseFixKept.Count - 1 do
       KeptArray.Add(FCaseFixKept[I]);

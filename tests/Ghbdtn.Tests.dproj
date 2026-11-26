@@ -66,6 +66,7 @@
     <DCCReference Include="..\src\Ghbdtn.KeyState.pas"/>
     <DCCReference Include="..\src\Ghbdtn.Learning.pas"/>
     <DCCReference Include="..\src\Ghbdtn.Phrase.pas"/>
+    <DCCReference Include="..\src\Ghbdtn.Hotkeys.pas"/>
     <DCCReference Include="..\src\Ghbdtn.Settings.pas"/>
     <DCCReference Include="..\src\Ghbdtn.Clipboard.pas"/>
     <DCCReference Include="..\src\Ghbdtn.Colors.pas"/>

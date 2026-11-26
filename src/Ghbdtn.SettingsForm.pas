@@ -27,6 +27,7 @@ uses
   Winapi.GDIPOBJ,
   Ghbdtn.Analyzer,
   Ghbdtn.Diagnostics,
+  Ghbdtn.Hotkeys,
   Ghbdtn.Learning,
   Ghbdtn.Settings,
   Ghbdtn.AutoStart,
@@ -754,6 +755,124 @@ begin
   end;
 end;
 
+type
+  { Shows the combination assigned to a command and takes a new one from the
+    keyboard. Backspace or Delete removes the assignment. }
+  THotkeyBox = class(TCustomEdit)
+  private
+    FAction: TAppAction;
+    FHotkey: THotkey;
+    FOnAssign: TNotifyEvent;
+    procedure SetHotkey(const AValue: THotkey);
+    procedure SetCapturing(AValue: Boolean);
+  protected
+    procedure DoEnter; override;
+    procedure DoExit; override;
+    procedure KeyDown(var Key: Word; Shift: TShiftState); override;
+    procedure KeyPress(var Key: Char); override;
+  public
+    constructor Create(AOwner: TComponent); override;
+    destructor Destroy; override;
+    property Action: TAppAction read FAction write FAction;
+    property Hotkey: THotkey read FHotkey write SetHotkey;
+    property OnAssign: TNotifyEvent read FOnAssign write FOnAssign;
+  end;
+
+constructor THotkeyBox.Create(AOwner: TComponent);
+begin
+  inherited Create(AOwner);
+  ReadOnly := True;
+  SetHotkey(NoHotkey);
+end;
+
+destructor THotkeyBox.Destroy;
+begin
+  SetCapturing(False);
+  inherited Destroy;
+end;
+
+procedure THotkeyBox.SetHotkey(const AValue: THotkey);
+begin
+  FHotkey := AValue;
+  if FHotkey.Key = 0 then
+    Text := 'не назначено'
+  else
+    Text := HotkeyToText(FHotkey);
+end;
+
+procedure THotkeyBox.SetCapturing(AValue: Boolean);
+begin
+  if HookManager <> nil then
+    HookManager.CapturingHotkey := AValue;
+end;
+
+procedure THotkeyBox.DoEnter;
+begin
+  inherited DoEnter;
+  SetCapturing(True);
+end;
+
+procedure THotkeyBox.DoExit;
+begin
+  SetCapturing(False);
+  inherited DoExit;
+end;
+
+procedure THotkeyBox.KeyDown(var Key: Word; Shift: TShiftState);
+var
+  Modifiers: THotkeyModifiers;
+  Pressed: THotkey;
+begin
+  Modifiers := [];
+  if ssCtrl in Shift then
+    Include(Modifiers, hmCtrl);
+  if ssAlt in Shift then
+    Include(Modifiers, hmAlt);
+  if ssShift in Shift then
+    Include(Modifiers, hmShift);
+  if (GetKeyState(VK_LWIN) < 0) or (GetKeyState(VK_RWIN) < 0) then
+    Include(Modifiers, hmWin);
+  // Tab, Enter, Esc and Alt+F4 keep their meaning in the dialog.
+  if IsModifierKey(Key) or
+     ((Key in [VK_TAB, VK_RETURN, VK_ESCAPE]) and
+      (Modifiers * [hmCtrl, hmAlt, hmWin] = [])) or
+     ((Key = VK_F4) and (Modifiers = [hmAlt])) then
+  begin
+    inherited KeyDown(Key, Shift);
+    Exit;
+  end;
+  Pressed := MakeHotkey(Key, Modifiers);
+  Key := 0;
+  if (Modifiers = []) and (Pressed.Key in [VK_BACK, VK_DELETE]) then
+    Pressed := NoHotkey
+  else if not IsAssignableHotkey(Pressed) then
+  begin
+    Text := 'нужен Ctrl, Alt или Win';
+    Exit;
+  end;
+  SetHotkey(Pressed);
+  if Assigned(FOnAssign) then
+    FOnAssign(Self);
+end;
+
+procedure THotkeyBox.KeyPress(var Key: Char);
+begin
+  if Key <> #9 then
+    Key := #0;
+end;
+
+const
+  HotkeyCaptions: array[TAppAction] of string = (
+    'Конвертировать слово или выделение',
+    'Конвертировать набранную строку',
+    'Инвертировать регистр',
+    'ВЕРХНИЙ РЕГИСТР',
+    'нижний регистр',
+    'Первая заглавная',
+    'В транслит',
+    'Из транслита',
+    'Пауза');
+
 const
   // Layout values are in pixels at 96 DPI and scaled by the form.
   PageMargin = 24;
@@ -809,6 +928,15 @@ type
     FMode: TComboBox;
     FHintMode: TComboBox;
     FDiagnostics: TComboBox;
+    FHotkeyBoxes: array[TAppAction] of THotkeyBox;
+    FHotkeys: THotkeyMap;
+    procedure AddHotkeyRow(AParent: TWinControl; var AY: Integer;
+      AAction: TAppAction);
+    procedure ShowHotkeys;
+    procedure HotkeyAssigned(Sender: TObject);
+    procedure DefaultHotkeysClick(Sender: TObject);
+    procedure BuildHotkeys(ALeft, ARight: TWinControl; var ALeftY,
+      ARightY: Integer);
     function S(AValue: Integer): Integer;
     function AddSection(AParent: TWinControl; var AY: Integer;
       const ATitle: string): TLabel;
@@ -1086,6 +1214,92 @@ begin
   Inc(ARightY, S(38));
 end;
 
+procedure TfrmSettings.AddHotkeyRow(AParent: TWinControl; var AY: Integer;
+  AAction: TAppAction);
+var
+  Box: THotkeyBox;
+  Caption: TLabel;
+begin
+  Box := THotkeyBox.Create(Self);
+  Box.Parent := AParent;
+  Box.Action := AAction;
+  Box.OnAssign := HotkeyAssigned;
+  Box.SetBounds(AParent.ClientWidth - S(PageMargin) - S(ComboWidth),
+    AY + (S(RowHeight) - Box.Height) div 2, S(ComboWidth), Box.Height);
+  Box.Anchors := [akTop, akRight];
+  Caption := TLabel.Create(Self);
+  Caption.Parent := AParent;
+  Caption.Caption := HotkeyCaptions[AAction];
+  Caption.AutoSize := False;
+  Caption.WordWrap := True;
+  Caption.Layout := tlCenter;
+  Caption.SetBounds(S(PageMargin), AY,
+    Box.Left - S(PageMargin) - S(12), S(RowHeight));
+  Caption.Anchors := [akLeft, akTop, akRight];
+  Caption.FocusControl := Box;
+  FHotkeyBoxes[AAction] := Box;
+  Inc(AY, S(RowHeight));
+end;
+
+procedure TfrmSettings.BuildHotkeys(ALeft, ARight: TWinControl; var ALeftY,
+  ARightY: Integer);
+var
+  Hint: TLabel;
+begin
+  AddSection(ALeft, ALeftY, 'Раскладка');
+  AddHotkeyRow(ALeft, ALeftY, aaConvert);
+  AddHotkeyRow(ALeft, ALeftY, aaConvertLine);
+  AddHotkeyRow(ALeft, ALeftY, aaPause);
+
+  Hint := TLabel.Create(Self);
+  Hint.Parent := ALeft;
+  Hint.AutoSize := False;
+  Hint.WordWrap := True;
+  Hint.Font.Color := clGrayText;
+  Hint.Caption := 'Щёлкните поле и нажмите клавишу или сочетание. Pause, ' +
+    'Scroll Lock, Insert и F1-F24 назначаются сами по себе, остальные ' +
+    'клавиши - вместе с Ctrl, Alt или Win. Backspace или Delete убирает ' +
+    'назначение. Жесты с двойным нажатием действуют и без назначенных клавиш.';
+  Inc(ALeftY, S(SectionGap));
+  Hint.SetBounds(S(PageMargin), ALeftY,
+    ALeft.ClientWidth - 2 * S(PageMargin), S(80));
+  Inc(ALeftY, S(84));
+  AddButton(ALeft, 'Вернуть по умолчанию', S(PageMargin), ALeftY,
+    DefaultHotkeysClick);
+  Inc(ALeftY, S(38));
+
+  AddSection(ARight, ARightY, 'Выделение или слово');
+  AddHotkeyRow(ARight, ARightY, aaCaseInvert);
+  AddHotkeyRow(ARight, ARightY, aaCaseUpper);
+  AddHotkeyRow(ARight, ARightY, aaCaseLower);
+  AddHotkeyRow(ARight, ARightY, aaCaseCapitalize);
+  AddHotkeyRow(ARight, ARightY, aaTranslitToLatin);
+  AddHotkeyRow(ARight, ARightY, aaTranslitToCyrillic);
+end;
+
+procedure TfrmSettings.ShowHotkeys;
+var
+  Action: TAppAction;
+begin
+  for Action := Low(TAppAction) to High(TAppAction) do
+    FHotkeyBoxes[Action].Hotkey := FHotkeys[Action];
+end;
+
+procedure TfrmSettings.HotkeyAssigned(Sender: TObject);
+var
+  Box: THotkeyBox;
+begin
+  Box := THotkeyBox(Sender);
+  AssignHotkey(FHotkeys, Box.Action, Box.Hotkey);
+  ShowHotkeys;
+end;
+
+procedure TfrmSettings.DefaultHotkeysClick(Sender: TObject);
+begin
+  FHotkeys := DefaultHotkeys;
+  ShowHotkeys;
+end;
+
 { A page is two columns of rows. Returns the height its rows need. }
 function TfrmSettings.AddPage(const ACaption: string;
   ABuild: TPageBuilder): Integer;
@@ -1152,6 +1366,7 @@ begin
   // longest page, so no page needs a scroll bar.
   Content := AddPage('Исправления', BuildCorrections);
   Content := Max(Content, AddPage('Ввод и подсказки', BuildInput));
+  Content := Max(Content, AddPage('Горячие клавиши', BuildHotkeys));
   Content := Max(Content, AddPage('Слова и сервис', BuildService));
   Area := TTabsCracker(FTabs).DisplayRect;
   Chrome := FTabs.Height - (Area.Bottom - Area.Top);
@@ -1235,6 +1450,8 @@ begin
   FMode.ItemIndex := Ord(AppSettings.HeuristicMode);
   FHintMode.ItemIndex := Ord(AppSettings.CaretHintMode);
   FDiagnostics.ItemIndex := Ord(AppSettings.DiagnosticsLevel);
+  FHotkeys := AppSettings.Hotkeys;
+  ShowHotkeys;
 end;
 
 procedure TfrmSettings.ApplyValues;
@@ -1277,6 +1494,7 @@ begin
     AppSettings.CaretHintMode := TCaretHintMode(FHintMode.ItemIndex);
   if FDiagnostics.ItemIndex >= 0 then
     AppSettings.DiagnosticsLevel := TDiagnosticsLevel(FDiagnostics.ItemIndex);
+  AppSettings.Hotkeys := FHotkeys;
   AppSettings.SaveToFile;
   ApplyAutoStart(AppSettings.AutoStart);
   ApplySystemIndicatorHidden(AppSettings.HideSystemIndicator);

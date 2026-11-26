@@ -94,7 +94,13 @@ begin
   if AItem.CaseCycle then
   begin
     if HookManager <> nil then
-      HookManager.RememberCaseText(AItem.NewText);
+    begin
+      if AItem.Translit = tdNone then
+        HookManager.RememberCaseText(AItem.NewText)
+      else
+        HookManager.RememberSelectionConversion(AItem.ExpectedText,
+          AItem.NewText);
+    end;
     Exit;
   end;
   if AItem.ToggleCapsLock and ((GetKeyState(VK_CAPITAL) and 1) <> 0) then

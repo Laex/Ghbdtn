@@ -8,6 +8,7 @@ uses
   Ghbdtn.Layout in 'src\Ghbdtn.Layout.pas',
   Ghbdtn.TrayIcon in 'src\Ghbdtn.TrayIcon.pas',
   Ghbdtn.Sound in 'src\Ghbdtn.Sound.pas',
+  Ghbdtn.Hotkeys in 'src\Ghbdtn.Hotkeys.pas',
   Ghbdtn.Settings in 'src\Ghbdtn.Settings.pas',
   Ghbdtn.AutoStart in 'src\Ghbdtn.AutoStart.pas',
   Ghbdtn.LayoutIndicator in 'src\Ghbdtn.LayoutIndicator.pas',

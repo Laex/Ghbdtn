@@ -24,6 +24,7 @@ uses
   Ghbdtn.KeyState,
   Ghbdtn.Learning,
   Ghbdtn.Phrase,
+  Ghbdtn.Hotkeys,
   Ghbdtn.Settings,
   Ghbdtn.LayoutIndicator,
   Ghbdtn.MarkerAnimation,
@@ -317,6 +318,27 @@ type
     procedure KeepsTheFirstBackupWhenHidingTwice;
     [Test]
     procedure RestoreWithoutHidingChangesNothing;
+  end;
+
+  [TestFixture]
+  THotkeyTests = class
+  public
+    [Test]
+    procedure RoundTripsAHotkeyThroughItsText;
+    [Test]
+    procedure ReadsCtrlBreakAsCtrlPause;
+    [Test]
+    procedure TakesATypingKeyOnlyWithCtrlAltOrWin;
+    [Test]
+    procedure RejectsATextThatNamesNoAssignableKey;
+    [Test]
+    procedure AssigningAKeyTakesItFromTheOtherCommand;
+    [Test]
+    procedure KeepsPauseForPausingByDefault;
+    [Test]
+    procedure PersistsAssignedHotkeys;
+    [Test]
+    procedure DropsTheDefaultKeyThatTheConfigGaveToAnotherCommand;
   end;
 
   [TestFixture]
@@ -2112,6 +2134,130 @@ begin
   Assert.IsFalse(IsRightShiftKey(VK_LSHIFT, $36));
 end;
 
+procedure THotkeyTests.RoundTripsAHotkeyThroughItsText;
+var
+  Code: Integer;
+  Source, Parsed: THotkey;
+begin
+  for Code := 1 to $FE do
+  begin
+    Source := MakeHotkey(Code, [hmCtrl, hmShift]);
+    if not IsAssignableHotkey(Source) then
+      Continue;
+    Assert.IsTrue(TryTextToHotkey(HotkeyToText(Source), Parsed),
+      HotkeyToText(Source));
+    Assert.IsTrue(SameHotkey(Source, Parsed), HotkeyToText(Source));
+  end;
+  Assert.AreEqual('Ctrl+Alt+U',
+    HotkeyToText(MakeHotkey(Ord('U'), [hmAlt, hmCtrl])));
+end;
+
+procedure THotkeyTests.ReadsCtrlBreakAsCtrlPause;
+begin
+  Assert.AreEqual('Ctrl+Pause', HotkeyToText(MakeHotkey(VK_CANCEL, [])));
+end;
+
+procedure THotkeyTests.TakesATypingKeyOnlyWithCtrlAltOrWin;
+begin
+  Assert.IsTrue(IsAssignableHotkey(MakeHotkey(VK_PAUSE, [])));
+  Assert.IsTrue(IsAssignableHotkey(MakeHotkey(VK_F12, [])));
+  Assert.IsTrue(IsAssignableHotkey(MakeHotkey(Ord('U'), [hmWin])));
+  Assert.IsFalse(IsAssignableHotkey(MakeHotkey(Ord('U'), [])));
+  Assert.IsFalse(IsAssignableHotkey(MakeHotkey(Ord('U'), [hmShift])));
+  Assert.IsFalse(IsAssignableHotkey(MakeHotkey(VK_DELETE, [])));
+  Assert.IsFalse(IsAssignableHotkey(MakeHotkey(VK_LCONTROL, [hmCtrl])));
+end;
+
+procedure THotkeyTests.RejectsATextThatNamesNoAssignableKey;
+var
+  Parsed: THotkey;
+begin
+  Assert.IsTrue(TryTextToHotkey('', Parsed));
+  Assert.AreEqual(0, Integer(Parsed.Key));
+  Assert.IsFalse(TryTextToHotkey('U', Parsed));
+  Assert.IsFalse(TryTextToHotkey('Ctrl+', Parsed));
+  Assert.IsFalse(TryTextToHotkey('Hyper+U', Parsed));
+  Assert.IsFalse(TryTextToHotkey('Ctrl+Nothing', Parsed));
+  Assert.AreEqual(0, Integer(Parsed.Key));
+end;
+
+procedure THotkeyTests.AssigningAKeyTakesItFromTheOtherCommand;
+var
+  Map: THotkeyMap;
+  Action: TAppAction;
+begin
+  Map := DefaultHotkeys;
+  AssignHotkey(Map, aaConvert, MakeHotkey(VK_PAUSE, []));
+  Assert.AreEqual(0, Integer(Map[aaPause].Key));
+  Assert.IsTrue(TryFindHotkeyAction(Map, MakeHotkey(VK_PAUSE, []), Action));
+  Assert.AreEqual(Integer(aaConvert), Integer(Action));
+  Assert.IsFalse(TryFindHotkeyAction(Map, MakeHotkey(VK_PAUSE, [hmShift]),
+    Action));
+  Assert.IsFalse(TryFindHotkeyAction(Map, NoHotkey, Action));
+end;
+
+procedure THotkeyTests.KeepsPauseForPausingByDefault;
+var
+  Map: THotkeyMap;
+  Action: TAppAction;
+begin
+  Map := DefaultHotkeys;
+  for Action := Low(TAppAction) to High(TAppAction) do
+    if Action = aaPause then
+      Assert.AreEqual('Pause', HotkeyToText(Map[Action]))
+    else
+      Assert.AreEqual('', HotkeyToText(Map[Action]));
+end;
+
+procedure THotkeyTests.PersistsAssignedHotkeys;
+var
+  Source, Loaded: TSettings;
+  Map: THotkeyMap;
+  ConfigPath: string;
+begin
+  ConfigPath := TPath.Combine(TPath.GetTempPath,
+    'ghbdtn-hotkeys-' + TGUID.NewGuid.ToString + '.json');
+  Source := TSettings.Create(ConfigPath);
+  Loaded := TSettings.Create(ConfigPath);
+  try
+    Map := Source.Hotkeys;
+    AssignHotkey(Map, aaConvert, MakeHotkey(VK_PAUSE, []));
+    AssignHotkey(Map, aaCaseUpper, MakeHotkey(Ord('U'), [hmCtrl, hmAlt]));
+    Source.Hotkeys := Map;
+    Source.SaveToFile;
+    Loaded.LoadFromFile;
+    Assert.AreEqual('Pause', HotkeyToText(Loaded.Hotkeys[aaConvert]));
+    Assert.AreEqual('Ctrl+Alt+U', HotkeyToText(Loaded.Hotkeys[aaCaseUpper]));
+    Assert.AreEqual('', HotkeyToText(Loaded.Hotkeys[aaPause]));
+  finally
+    Loaded.Free;
+    Source.Free;
+    DeleteIfExists(ConfigPath);
+    DeleteIfExists(ConfigPath + '.bak');
+  end;
+end;
+
+procedure THotkeyTests.DropsTheDefaultKeyThatTheConfigGaveToAnotherCommand;
+var
+  Loaded: TSettings;
+  ConfigPath: string;
+begin
+  ConfigPath := TPath.Combine(TPath.GetTempPath,
+    'ghbdtn-hotkeys-' + TGUID.NewGuid.ToString + '.json');
+  TFile.WriteAllText(ConfigPath, '{"Hotkeys":{"Convert":"Pause"}}',
+    TEncoding.UTF8);
+  Loaded := TSettings.Create(ConfigPath);
+  try
+    Loaded.LoadFromFile;
+    Assert.AreEqual('Pause', HotkeyToText(Loaded.Hotkeys[aaConvert]));
+    Assert.AreEqual('', HotkeyToText(Loaded.Hotkeys[aaPause]));
+  finally
+    Loaded.Free;
+    DeleteIfExists(ConfigPath);
+    DeleteIfExists(ConfigPath + '.bak');
+  end;
+end;
+
 procedure TSettingsTests.SavesAndLoadsAllSettings;
 var
   Source: TSettings;
@@ -3882,6 +4028,7 @@ initialization
   TDUnitX.RegisterTestFixture(TReadingTests);
   TDUnitX.RegisterTestFixture(TInputBufferTests);
   TDUnitX.RegisterTestFixture(TLeftShiftStateTests);
+  TDUnitX.RegisterTestFixture(THotkeyTests);
   TDUnitX.RegisterTestFixture(TSettingsTests);
   TDUnitX.RegisterTestFixture(TLayoutIndicatorTests);
   TDUnitX.RegisterTestFixture(TMarkerAnimationTests);

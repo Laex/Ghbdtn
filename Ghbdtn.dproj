@@ -113,6 +113,7 @@
         <DCCReference Include="src\Ghbdtn.Layout.pas"/>
         <DCCReference Include="src\Ghbdtn.TrayIcon.pas"/>
         <DCCReference Include="src\Ghbdtn.Sound.pas"/>
+        <DCCReference Include="src\Ghbdtn.Hotkeys.pas"/>
         <DCCReference Include="src\Ghbdtn.Settings.pas"/>
         <DCCReference Include="src\Ghbdtn.AutoStart.pas"/>
         <DCCReference Include="src\Ghbdtn.LayoutIndicator.pas"/>

@@ -10,6 +10,7 @@ uses
   Ghbdtn.Translit,
   Ghbdtn.Buffer,
   Ghbdtn.FieldWatch,
+  Ghbdtn.Hotkeys,
   Ghbdtn.KeyState,
   Ghbdtn.InputQueue,
   Ghbdtn.InputWorker,
@@ -104,7 +105,13 @@ type
     FFieldWatcher: TFieldWatcher;
     FGloballyPaused: Boolean;
     FPauseUntil: UInt64;
-    FPauseKeyDown: Boolean;
+    // The key of the assigned combination being held: it and its release are
+    // not passed on.
+    FHotkeyKey: Word;
+    // The command waits until every key of the combination is released.
+    FHotkeyPending: Boolean;
+    FHotkeyAction: TAppAction;
+    FCapturingHotkey: Boolean;
     FMouseDown: Boolean;
     FMouseDragged: Boolean;
     FMouseDownPoint: TPoint;
@@ -137,6 +144,14 @@ type
     procedure HandleLeftShiftEvent(AIsKeyDown, AIsKeyUp: Boolean);
     procedure HandleRightShiftEvent(AIsKeyDown, AIsKeyUp: Boolean);
     procedure HandleDoubleRightShift;
+    procedure TransformText(AMode: TCaseMode; ATranslit: TTranslitDirection);
+    procedure ConvertTypedLine;
+    function HandleHotkeyEvent(AVirtualKey: Word; AIsKeyDown,
+      AIsKeyUp: Boolean): Boolean;
+    function AcceptsHotkey(AAction: TAppAction): Boolean;
+    procedure SpoilTapGestures;
+    procedure RunPendingHotkey(AReleasedKey: Word);
+    procedure RunHotkeyAction(AAction: TAppAction);
     procedure ClearLastCase;
     function TakeSelectionUndo(out AOriginal, AConverted: string): Boolean;
     function ReadCaseText: string;
@@ -205,6 +220,10 @@ type
     procedure RunTranslitCommand(ADirection: TTranslitDirection);
     procedure RememberSelectionConversion(const AOriginal, AConverted: string);
     property OnLangChange: TLangChangeEvent read FOnLangChange write FOnLangChange;
+    { Set while a field of this program waits for a combination to assign: its
+      keys reach the field untouched. }
+    property CapturingHotkey: Boolean read FCapturingHotkey
+      write FCapturingHotkey;
   end;
 
 var
@@ -251,6 +270,7 @@ function QueryFullProcessImageNameW(AProcess: THandle; AFlags: DWORD;
   external kernel32 name 'QueryFullProcessImageNameW';
 
 function IsNavigationOrEditKey(AVirtualKey: DWORD): Boolean; forward;
+function IsOwnWindow(AWindow: HWND): Boolean; forward;
 
 function LowLevelKeyboardProc(Code: Integer; WParam: WPARAM;
   LParam: LPARAM): LRESULT; stdcall;
@@ -626,6 +646,7 @@ begin
   FRightUsedAsModifier := False;
   FRightTapCount := 0;
   FRightTapTick := 0;
+  FHotkeyPending := False;
   ClearLastCase;
 end;
 
@@ -1526,59 +1547,203 @@ begin
 end;
 
 procedure TKbdHookManager.HandleDoubleRightShift;
-var
-  Item: TInputWorkItem;
-  CaseText, NextText: string;
-  PreferSelection: Boolean;
 begin
   FPendingDoubleRightShift := False;
   FRightTapCount := 0;
   FRightTapTick := 0;
   FRightUsedAsModifier := False;
   FLastRShiftTime := 0;
+  TransformText(cmInvert, tdNone);
+end;
+
+{ Changes the case of, or transliterates, the selection, otherwise the word
+  being typed, otherwise the word at the caret. }
+procedure TKbdHookManager.TransformText(AMode: TCaseMode;
+  ATranslit: TTranslitDirection);
+var
+  Item: TInputWorkItem;
+  Source, NextText: string;
+  PreferSelection: Boolean;
+begin
   FillChar(Item, SizeOf(Item), 0);
   Item.TargetWindow := GetForegroundWindow;
   Item.CaseCycle := True;
+  Item.CaseMode := AMode;
+  Item.Translit := ATranslit;
   Item.LearningProcess := LearningProcessName;
   PreferSelection := IsSelectionStillArmed and FInputBuffer.IsEmpty;
-  if PreferSelection then
+  Source := '';
+  if not PreferSelection then
   begin
-    Item.Kind := iwReplaceSelection;
-    FInputBuffer.Clear;
-  end
-  else if not FInputBuffer.IsEmpty then
+    if not FInputBuffer.IsEmpty then
+      Source := FInputBuffer.BufferText
+    else if ATranslit = tdNone then
+      Source := ReadCaseText;
+  end;
+  if Source <> '' then
   begin
-    CaseText := FInputBuffer.BufferText;
-    NextText := InvertLetterCase(CaseText);
-    if NextText = CaseText then
+    if ATranslit = tdNone then
+      NextText := ApplyCaseMode(Source, AMode)
+    else
+      NextText := ApplyTranslit(Source, ATranslit);
+    if NextText = Source then
       Exit;
     Item.Kind := iwReplaceWord;
-    Item.OldWordLength := FInputBuffer.BufferLength;
+    Item.OldWordLength := Length(Source);
+    Item.ExpectedText := Source;
     Item.NewText := NextText;
     FInputBuffer.Clear;
   end
   else
   begin
-    CaseText := ReadCaseText;
-    if CaseText <> '' then
-    begin
-      NextText := InvertLetterCase(CaseText);
-      if NextText = CaseText then
-        Exit;
-      Item.Kind := iwReplaceWord;
-      Item.OldWordLength := Length(CaseText);
-      Item.NewText := NextText;
-    end
-    else
-    begin
-      Item.Kind := iwReplaceSelection;
-      Item.FromCaret := True;
-    end;
+    Item.Kind := iwReplaceSelection;
+    Item.FromCaret := not PreferSelection;
   end;
   ClearLastConversion;
   FSelectionArmed := False;
   FSelectionArmedTick := 0;
   EnqueueWork(Item);
+end;
+
+function IsKeyHeld(AVirtualKey: Word): Boolean;
+begin
+  Result := (GetAsyncKeyState(AVirtualKey) and $8000) <> 0;
+end;
+
+{ The modifiers held down, not counting AReleasedKey: its state is not updated
+  yet while the hook handles its release. }
+function HeldModifiers(AReleasedKey: Word = 0): THotkeyModifiers;
+
+  function Held(AVirtualKey: Word): Boolean;
+  begin
+    Result := (AVirtualKey <> AReleasedKey) and IsKeyHeld(AVirtualKey);
+  end;
+
+begin
+  Result := [];
+  if Held(VK_LCONTROL) or Held(VK_RCONTROL) then
+    Include(Result, hmCtrl);
+  if Held(VK_LMENU) or Held(VK_RMENU) then
+    Include(Result, hmAlt);
+  // VK_RSHIFT alone is not a reliable query, so a press also asks VK_SHIFT.
+  if Held(VK_LSHIFT) or Held(VK_RSHIFT) or
+     ((AReleasedKey = 0) and IsKeyHeld(VK_SHIFT)) then
+    Include(Result, hmShift);
+  if Held(VK_LWIN) or Held(VK_RWIN) then
+    Include(Result, hmWin);
+end;
+
+{ True when the event belongs to an assigned combination and must not reach the
+  application. The command runs once the keys are released, so that a held
+  Ctrl or Alt does not turn the replacement into a shortcut. }
+function TKbdHookManager.HandleHotkeyEvent(AVirtualKey: Word; AIsKeyDown,
+  AIsKeyUp: Boolean): Boolean;
+const
+  // An unassigned key code. Typed while Alt or Win is held, it keeps their
+  // release from opening the window menu or the Start menu.
+  MenuMaskKey = $E8;
+var
+  Hotkey: THotkey;
+  Action: TAppAction;
+begin
+  if (FHotkeyKey <> 0) and (AVirtualKey = FHotkeyKey) then
+  begin
+    if AIsKeyUp then
+    begin
+      FHotkeyKey := 0;
+      RunPendingHotkey(0);
+    end;
+    Exit(True);
+  end;
+  Result := False;
+  if IsModifierKey(AVirtualKey) then
+  begin
+    if AIsKeyUp and (FHotkeyKey = 0) then
+      RunPendingHotkey(AVirtualKey);
+    Exit;
+  end;
+  if not AIsKeyDown then
+    Exit;
+  FHotkeyPending := False;
+  Hotkey := MakeHotkey(AVirtualKey, HeldModifiers);
+  if not AppSettings.TryFindHotkey(Hotkey, Action) or
+     not AcceptsHotkey(Action) then
+    Exit;
+  SpoilTapGestures;
+  if Hotkey.Modifiers * [hmAlt, hmWin] <> [] then
+    SendMarkedKeyPress(MenuMaskKey);
+  FHotkeyKey := AVirtualKey;
+  if Action = aaPause then
+    ToggleGlobalPause
+  else
+  begin
+    FHotkeyAction := Action;
+    FHotkeyPending := True;
+  end;
+  Result := True;
+end;
+
+{ Pausing works everywhere. The other commands leave the key to a password
+  field and to an application where the program is switched off. }
+function TKbdHookManager.AcceptsHotkey(AAction: TAppAction): Boolean;
+begin
+  if AAction = aaPause then
+    Exit(True);
+  if IsFocusedPasswordField then
+  begin
+    ShowCaretNote('Поле пароля');
+    Exit(False);
+  end;
+  Result := CurrentApplicationEnabled;
+  if not Result then
+    ShowCaretNote(IgnoredReason);
+end;
+
+{ The modifiers of a combination are not taps of a double-press gesture. }
+procedure TKbdHookManager.SpoilTapGestures;
+begin
+  FCtrlClean := False;
+  FCtrlTapTick := 0;
+  FRCtrlClean := False;
+  if FLeftShiftDown then
+    MarkShiftUsedAsModifier;
+  if FRightShiftDown then
+    FRightUsedAsModifier := True;
+  FLastRShiftTime := 0;
+  FPendingDoubleRightShift := False;
+  FRightTapCount := 0;
+end;
+
+procedure TKbdHookManager.RunPendingHotkey(AReleasedKey: Word);
+begin
+  if not FHotkeyPending or (HeldModifiers(AReleasedKey) <> []) then
+    Exit;
+  FHotkeyPending := False;
+  RunHotkeyAction(FHotkeyAction);
+end;
+
+procedure TKbdHookManager.RunHotkeyAction(AAction: TAppAction);
+begin
+  case AAction of
+    aaConvert:
+      HandleDoubleLeftShift;
+    aaConvertLine:
+      ConvertTypedLine;
+    aaCaseInvert:
+      TransformText(cmInvert, tdNone);
+    aaCaseUpper:
+      TransformText(cmUpper, tdNone);
+    aaCaseLower:
+      TransformText(cmLower, tdNone);
+    aaCaseCapitalize:
+      TransformText(cmCapitalize, tdNone);
+    aaTranslitToLatin:
+      TransformText(cmInvert, tdToLatin);
+    aaTranslitToCyrillic:
+      TransformText(cmInvert, tdToCyrillic);
+    aaPause:
+      ToggleGlobalPause;
+  end;
 end;
 
 procedure TKbdHookManager.HandleRightShiftEvent(AIsKeyDown, AIsKeyUp: Boolean);
@@ -2144,9 +2309,15 @@ begin
   EnqueueWork(Item);
 end;
 
-{ Double Ctrl: the selection if there is one, otherwise everything typed since
-  the caret last moved, otherwise the word at the caret. }
 procedure TKbdHookManager.HandleDoubleCtrl;
+begin
+  if AppSettings.DoubleCtrlEnabled and CurrentApplicationEnabled then
+    ConvertTypedLine;
+end;
+
+{ Converts the selection if there is one, otherwise everything typed since the
+  caret last moved, otherwise the word at the caret. }
+procedure TKbdHookManager.ConvertTypedLine;
 var
   Item: TInputWorkItem;
   Profile: TApplicationProfile;
@@ -2156,8 +2327,6 @@ var
   I: Integer;
   HasLetter: Boolean;
 begin
-  if not AppSettings.DoubleCtrlEnabled or not CurrentApplicationEnabled then
-    Exit;
   FillChar(Item, SizeOf(Item), 0);
   Item.TargetWindow := GetForegroundWindow;
   Profile := CurrentProfile;
@@ -2424,6 +2593,15 @@ begin
   end;
 end;
 
+function IsOwnWindow(AWindow: HWND): Boolean;
+var
+  ProcessId: DWORD;
+begin
+  ProcessId := 0;
+  GetWindowThreadProcessId(AWindow, ProcessId);
+  Result := ProcessId = GetCurrentProcessId;
+end;
+
 function IsNavigationOrEditKey(AVirtualKey: DWORD): Boolean;
 begin
   Result := AVirtualKey in [VK_LEFT, VK_RIGHT, VK_UP, VK_DOWN, VK_HOME,
@@ -2449,6 +2627,8 @@ begin
   // leaves Y held down and the rest of the text is typed as "yyyy...".
   if IsInjectingInput or IsOwnInput(Kbd^.dwExtraInfo) or
      (Kbd^.vkCode = VK_PACKET) then
+    Exit;
+  if FCapturingHotkey and IsOwnWindow(GetForegroundWindow) then
     Exit;
 
   Captured.VirtualKey := Word(Kbd^.vkCode);
@@ -2484,17 +2664,8 @@ begin
     Exit(True);
   end;
 
-  if Kbd^.vkCode = VK_PAUSE then
-  begin
-    if IsKeyDown and not FPauseKeyDown then
-    begin
-      FPauseKeyDown := True;
-      ToggleGlobalPause;
-    end
-    else if IsKeyUp then
-      FPauseKeyDown := False;
+  if HandleHotkeyEvent(Word(Kbd^.vkCode), IsKeyDown, IsKeyUp) then
     Exit(True);
-  end;
 
   if IsFocusedPasswordField then
   begin
