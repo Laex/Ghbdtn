@@ -67,6 +67,33 @@ function ShortWordStartsRussianPhrase(const APhrase: TPhraseContext): Boolean;
 { Three or more of the key that types "ё" on the Russian layout: a code fence
   typed on the wrong layout. No Russian word looks like that. }
 function IsCodeFenceKeys(const AText: string): Boolean;
+
+type
+  { What stands in the text after a switched word: the key that ended it
+    (space, Enter or Tab), or a mark with the form it was typed in. }
+  TSwitchDelimiter = record
+    Key: Word;
+    Shown: Char;
+    Typed: Char;
+  end;
+
+  { How to take a switch back: EraseCount characters before the caret are
+    replaced with NewText followed by TrailingKey. LineOld and LineNew are the
+    same change in the tracked line, empty after Enter or Tab. }
+  TSwitchUndo = record
+    EraseCount: Integer;
+    NewText: string;
+    TrailingKey: Word;
+    LineOld: string;
+    LineNew: string;
+  end;
+
+{ APunctuation is the mark of the delimiter key, #0 for space, Enter and Tab.
+  AShownAs is the mark left in the text when it differs from the one typed. }
+function DelimiterAfterSwitch(AVKCode: Word;
+  APunctuation, AShownAs: Char): TSwitchDelimiter;
+function PlanSwitchUndo(const AConverted: string;
+  const ADelimiter: TSwitchDelimiter): TSwitchUndo;
 function IsCaretSymbolChar(C: Char): Boolean;
 function IsEnglishQuestionMarker(const AText: string): Boolean;
 function AnalyzeSelection(const AText: string; AMode: THeuristicMode;
@@ -126,6 +153,7 @@ function NormalizeAnalyzedWord(const AWord: string): string;
 implementation
 
 uses
+  Winapi.Windows,
   System.Math,
   Ghbdtn.Diagnostics,
   Ghbdtn.Heuristics,
@@ -850,6 +878,51 @@ begin
   if (Length(Head) < 2) or (Head[Length(Head)] <> ' ') then
     Exit(False);
   Result := ShortWordEndingAt(Head, Length(Head) - 1, AWord);
+end;
+
+function DelimiterAfterSwitch(AVKCode: Word;
+  APunctuation, AShownAs: Char): TSwitchDelimiter;
+begin
+  Result := Default(TSwitchDelimiter);
+  if APunctuation <> #0 then
+  begin
+    Result.Typed := APunctuation;
+    if AShownAs <> #0 then
+      Result.Shown := AShownAs
+    else
+      Result.Shown := APunctuation;
+  end
+  else if AVKCode in [VK_SPACE, VK_RETURN, VK_TAB] then
+    Result.Key := AVKCode;
+end;
+
+function PlanSwitchUndo(const AConverted: string;
+  const ADelimiter: TSwitchDelimiter): TSwitchUndo;
+begin
+  Result.EraseCount := Length(AConverted);
+  Result.NewText := ConvertStringSwap(AConverted);
+  Result.TrailingKey := ADelimiter.Key;
+  Result.LineOld := AConverted;
+  Result.LineNew := Result.NewText;
+  if ADelimiter.Typed <> #0 then
+  begin
+    Inc(Result.EraseCount);
+    Result.NewText := Result.NewText + ADelimiter.Typed;
+    Result.LineOld := Result.LineOld + ADelimiter.Shown;
+    Result.LineNew := Result.NewText;
+  end
+  else if ADelimiter.Key = VK_SPACE then
+  begin
+    Inc(Result.EraseCount);
+    Result.LineOld := Result.LineOld + ' ';
+    Result.LineNew := Result.LineNew + ' ';
+  end
+  else if ADelimiter.Key <> 0 then
+  begin
+    Inc(Result.EraseCount);
+    Result.LineOld := '';
+    Result.LineNew := '';
+  end;
 end;
 
 function LineEndsWithQuestionBefore(const ALine: string;

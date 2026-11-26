@@ -171,6 +171,12 @@ type
     [Test]
     procedure FindsShortWordBeforeQuestionMark;
     [Test]
+    procedure UndoOfSwitchedWordKeepsTheKeyThatEndedIt;
+    [Test]
+    procedure UndoOfSwitchedWordRestoresTheMarkAsTyped;
+    [Test]
+    procedure UndoOfSwitchedWordWithoutDelimiterErasesTheWordOnly;
+    [Test]
     procedure DetectsQuestionMarkBeforeWord;
     [Test]
     procedure IgnoresPrecedingWordThatIsNotAShortFunctionWord;
@@ -423,6 +429,8 @@ type
     procedure CapturedReplaySignalsWorker;
     [Test]
     procedure BackgroundWorkDoesNotCaptureInput;
+    [Test]
+    procedure ReleaseOfSwallowedKeyIsNotQueuedForReplay;
   end;
 
   [TestFixture]
@@ -1410,6 +1418,55 @@ begin
   Assert.AreEqual('Yt', Prev);
   Assert.IsTrue(TryPrecedingShortWord('text (d yfxfkt', 6, Prev));
   Assert.AreEqual('d', Prev);
+end;
+
+procedure TAnalyzerTests.UndoOfSwitchedWordKeepsTheKeyThatEndedIt;
+var
+  Undo: TSwitchUndo;
+begin
+  Undo := PlanSwitchUndo('привет', DelimiterAfterSwitch(VK_SPACE, #0, #0));
+  Assert.AreEqual(7, Undo.EraseCount);
+  Assert.AreEqual('ghbdtn', Undo.NewText);
+  Assert.AreEqual(Integer(VK_SPACE), Integer(Undo.TrailingKey));
+  Assert.AreEqual('привет ', Undo.LineOld);
+  Assert.AreEqual('ghbdtn ', Undo.LineNew);
+
+  Undo := PlanSwitchUndo('hello', DelimiterAfterSwitch(VK_RETURN, #0, #0));
+  Assert.AreEqual(6, Undo.EraseCount);
+  Assert.AreEqual('руддщ', Undo.NewText);
+  Assert.AreEqual(Integer(VK_RETURN), Integer(Undo.TrailingKey));
+  // Enter and Tab start a new tracked line, so there is nothing to rewrite.
+  Assert.AreEqual('', Undo.LineOld);
+  Assert.AreEqual('', Undo.LineNew);
+end;
+
+procedure TAnalyzerTests.UndoOfSwitchedWordRestoresTheMarkAsTyped;
+var
+  Undo: TSwitchUndo;
+begin
+  // "?" on the English layout is "," once the word is switched to Russian.
+  Undo := PlanSwitchUndo('привет', DelimiterAfterSwitch(VK_OEM_2, '?', ','));
+  Assert.AreEqual(7, Undo.EraseCount);
+  Assert.AreEqual('ghbdtn?', Undo.NewText);
+  Assert.AreEqual(0, Integer(Undo.TrailingKey));
+  Assert.AreEqual('привет,', Undo.LineOld);
+  Assert.AreEqual('ghbdtn?', Undo.LineNew);
+
+  Undo := PlanSwitchUndo('привет', DelimiterAfterSwitch(VK_OEM_MINUS, '-', #0));
+  Assert.AreEqual('ghbdtn-', Undo.NewText);
+  Assert.AreEqual('привет-', Undo.LineOld);
+end;
+
+procedure TAnalyzerTests.UndoOfSwitchedWordWithoutDelimiterErasesTheWordOnly;
+var
+  Undo: TSwitchUndo;
+begin
+  Undo := PlanSwitchUndo('привет', Default(TSwitchDelimiter));
+  Assert.AreEqual(6, Undo.EraseCount);
+  Assert.AreEqual('ghbdtn', Undo.NewText);
+  Assert.AreEqual(0, Integer(Undo.TrailingKey));
+  Assert.AreEqual('привет', Undo.LineOld);
+  Assert.AreEqual('ghbdtn', Undo.LineNew);
 end;
 
 procedure TAnalyzerTests.FindsShortWordBeforeQuestionMark;
@@ -3372,6 +3429,36 @@ begin
     Assert.IsTrue(Queue.TryCaptureReplay(Input));
     Assert.AreEqual(Integer(wrSignaled),
       Integer(Queue.WaitForWork(0)));
+  finally
+    Queue.Free;
+  end;
+end;
+
+procedure TInputQueueTests.ReleaseOfSwallowedKeyIsNotQueuedForReplay;
+var
+  Queue: TInputQueue;
+  Item: TInputWorkItem;
+  Press, Release, Other: TQueuedInput;
+  Swallowed: Word;
+begin
+  Queue := TInputQueue.Create;
+  try
+    FillChar(Item, SizeOf(Item), 0);
+    Item.Kind := iwReplaceWord;
+    Queue.EnqueueWork(Item);
+    FillChar(Press, SizeOf(Press), 0);
+    Press.VirtualKey := Ord('B');
+    Release := Press;
+    Release.Flags := KEYEVENTF_KEYUP;
+    Other := Press;
+    Other.VirtualKey := Ord('D');
+    Swallowed := Ord('B');
+
+    Assert.IsTrue(Queue.RouteInput(Swallowed, Other) = irQueued);
+    Assert.IsTrue(Queue.RouteInput(Swallowed, Release) = irSwallow);
+    Assert.AreEqual(0, Integer(Swallowed));
+    // The next press of the same key is typed, not eaten.
+    Assert.IsTrue(Queue.RouteInput(Swallowed, Press) = irQueued);
   finally
     Queue.Free;
   end;

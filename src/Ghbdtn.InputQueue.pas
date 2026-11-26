@@ -45,6 +45,11 @@ type
     Flags: DWORD;
   end;
 
+type
+  { irProcess: the hook handles the key itself. irSwallow: the key goes
+    nowhere. irQueued: it is typed after the pending replacement. }
+  TInputRoute = (irProcess, irSwallow, irQueued);
+
 { A queued replacement is applied only to the control it was prepared for and
   only shortly after it was queued; otherwise the text under the caret is no
   longer the text it was computed from. }
@@ -75,6 +80,10 @@ type
     procedure EnqueueWork(const AItem: TInputWorkItem);
     procedure EnqueueReplay(const AInput: TQueuedInput);
     function TryCaptureReplay(const AInput: TQueuedInput): Boolean;
+    { ASwallowedKey is the key whose press the hook kept from the application,
+      or 0. It is cleared by the release of that key. }
+    function RouteInput(var ASwallowedKey: Word;
+      const AInput: TQueuedInput): TInputRoute;
     function TryDequeueWork(out AItem: TInputWorkItem): Boolean;
     function TryDequeueBackground(out AItem: TInputWorkItem): Boolean;
     function TryDequeueReplay(out AInput: TQueuedInput): Boolean;
@@ -182,6 +191,22 @@ begin
   end;
   if Result then
     FSignal.SetEvent;
+end;
+
+function TInputQueue.RouteInput(var ASwallowedKey: Word;
+  const AInput: TQueuedInput): TInputRoute;
+begin
+  // The swallowed key is answered before the replay capture: a captured release
+  // would leave the key marked and its next press would be lost.
+  if (ASwallowedKey <> 0) and (AInput.VirtualKey = ASwallowedKey) then
+  begin
+    if (AInput.Flags and KEYEVENTF_KEYUP) <> 0 then
+      ASwallowedKey := 0;
+    Exit(irSwallow);
+  end;
+  if TryCaptureReplay(AInput) then
+    Exit(irQueued);
+  Result := irProcess;
 end;
 
 function TInputQueue.TryDequeueWork(out AItem: TInputWorkItem): Boolean;

@@ -11,14 +11,10 @@ const
   GHBDTN_INPUT_SIGNATURE: ULONG_PTR = ULONG_PTR($47484244544E5632);
 
 function IsOwnInput(AExtraInfo: ULONG_PTR): Boolean;
-function IsInjectingInput: Boolean;
 function IsTargetWindowValid(ATargetWindow: HWND): Boolean;
 { The control that has the keyboard focus in the foreground window, or 0. }
 function ForegroundFocusWindow: HWND;
 
-var
-  PauseKeyboardHook: procedure;
-  ResumeKeyboardHook: procedure;
 function ResolveInputTargetWindow(AForegroundWindow: HWND): HWND;
 function EnsureModifiersReleased: Boolean;
 function SendMarkedKey(AVirtualKey: Word; AKeyUp: Boolean = False;
@@ -28,7 +24,6 @@ function SendMarkedKeyPress(AVirtualKey: Word): Boolean;
 function SendMarkedArrow(AVirtualKey: Word; ACount: Integer;
   AWithShift: Boolean): Boolean;
 function SendMarkedShortcut(AModifier, AKey: Word): Boolean;
-function SendMarkedUnicode(const AText: string): Boolean;
 function SendMarkedBackspaces(ACount: Integer): Boolean;
 function SendMarkedWordReplacement(ABackspaces: Integer; const AText: string;
   ATrailingKey: Word): Boolean;
@@ -44,21 +39,12 @@ const
   SendRetryDelayMs = 5;
   UnicodeCharGapMs = 3;
   BackspaceSettleMs = 15;
-  PauseHookForReplacement = False;
   ModifierReleaseAttempts = 10;
   ModifierReleaseDelayMs = 10;
-
-var
-  InjectingInput: Integer;
 
 function IsOwnInput(AExtraInfo: ULONG_PTR): Boolean;
 begin
   Result := AExtraInfo = GHBDTN_INPUT_SIGNATURE;
-end;
-
-function IsInjectingInput: Boolean;
-begin
-  Result := AtomicIncrement(InjectingInput, 0) > 0;
 end;
 
 function IsTargetWindowValid(ATargetWindow: HWND): Boolean;
@@ -111,18 +97,13 @@ begin
   Result := False;
   if Length(AInputs) = 0 then
     Exit;
-  AtomicIncrement(InjectingInput);
-  try
-    for Attempt := 1 to SendRetryCount do
-    begin
-      if SendInput(Length(AInputs), AInputs[0], SizeOf(TInput)) =
-         UINT(Length(AInputs)) then
-        Exit(True);
-      if Attempt < SendRetryCount then
-        Sleep(SendRetryDelayMs);
-    end;
-  finally
-    AtomicDecrement(InjectingInput);
+  for Attempt := 1 to SendRetryCount do
+  begin
+    if SendInput(Length(AInputs), AInputs[0], SizeOf(TInput)) =
+       UINT(Length(AInputs)) then
+      Exit(True);
+    if Attempt < SendRetryCount then
+      Sleep(SendRetryDelayMs);
   end;
 end;
 
@@ -235,43 +216,6 @@ begin
   Result := SendInputsWithRetry(Inputs);
 end;
 
-function SendUnicodeChar(ACode: Word): Boolean;
-var
-  Inputs: array[0..1] of TInput;
-begin
-  ZeroMemory(@Inputs[0], SizeOf(Inputs));
-  Inputs[0].Itype := INPUT_KEYBOARD;
-  Inputs[0].ki.wScan := ACode;
-  Inputs[0].ki.dwFlags := KEYEVENTF_UNICODE;
-  Inputs[1].Itype := INPUT_KEYBOARD;
-  Inputs[1].ki.wScan := ACode;
-  Inputs[1].ki.dwFlags := KEYEVENTF_UNICODE or KEYEVENTF_KEYUP;
-  Result := SendInput(2, Inputs[0], SizeOf(TInput)) = 2;
-end;
-
-function SendMarkedUnicode(const AText: string): Boolean;
-var
-  I: Integer;
-begin
-  Result := True;
-  if AText = '' then
-    Exit;
-  // A low-level keyboard hook corrupts KEYEVENTF_UNICODE for non-ASCII
-  // characters into a stuck Y. The hook must be removed for the duration.
-  if Assigned(PauseKeyboardHook) then
-    PauseKeyboardHook;
-  AtomicIncrement(InjectingInput);
-  try
-    for I := 1 to Length(AText) do
-      if not SendUnicodeChar(Word(AText[I])) then
-        Result := False;
-  finally
-    AtomicDecrement(InjectingInput);
-    if Assigned(ResumeKeyboardHook) then
-      ResumeKeyboardHook;
-  end;
-end;
-
 function SendMarkedBackspaces(ACount: Integer): Boolean;
 var
   Inputs: TArray<TInput>;
@@ -340,54 +284,37 @@ begin
     Inputs[Index + 1].ki.dwFlags := KEYEVENTF_KEYUP;
   end;
 
-  // With PauseHookForReplacement the hook is removed for the whole sequence;
-  // otherwise a key typed meanwhile is queued by the hook behind the
-  // replacement. Each Unicode character is sent on its own: a target that has
-  // not yet read the earlier characters of one large batch turns all of them
-  // into the last one.
-  if PauseHookForReplacement then
+  // A key typed meanwhile is queued by the hook behind the replacement. Each
+  // Unicode character is sent on its own: a target that has not yet read the
+  // earlier characters of one large batch turns all of them into the last one.
+  Result := True;
+  Index := 0;
+  while Result and (Index < Count) do
   begin
-    if Assigned(PauseKeyboardHook) then
-      PauseKeyboardHook;
-    AtomicIncrement(InjectingInput);
-  end;
-  try
-    Result := True;
-    Index := 0;
-    while Result and (Index < Count) do
+    if Index < ABackspaces * 2 then
+      Slice := ABackspaces * 2
+    else
+      Slice := 2;
+    if Index + Slice > Count then
+      Slice := Count - Index;
+    Sent := False;
+    for Attempt := 1 to SendRetryCount do
     begin
-      if Index < ABackspaces * 2 then
-        Slice := ABackspaces * 2
-      else
-        Slice := 2;
-      if Index + Slice > Count then
-        Slice := Count - Index;
-      Sent := False;
-      for Attempt := 1 to SendRetryCount do
+      if SendInput(Slice, Inputs[Index], SizeOf(TInput)) = UINT(Slice) then
       begin
-        if SendInput(Slice, Inputs[Index], SizeOf(TInput)) = UINT(Slice) then
-        begin
-          Sent := True;
-          Break;
-        end;
-        if Attempt < SendRetryCount then
-          Sleep(SendRetryDelayMs);
+        Sent := True;
+        Break;
       end;
-      Result := Sent;
-      Inc(Index, Slice);
-      if Result and (Index < Count) then
-        if Index <= ABackspaces * 2 then
-          Sleep(BackspaceSettleMs)
-        else
-          Sleep(UnicodeCharGapMs);
+      if Attempt < SendRetryCount then
+        Sleep(SendRetryDelayMs);
     end;
-  finally
-    if PauseHookForReplacement then
-    begin
-      AtomicDecrement(InjectingInput);
-      if Assigned(ResumeKeyboardHook) then
-        ResumeKeyboardHook;
-    end;
+    Result := Sent;
+    Inc(Index, Slice);
+    if Result and (Index < Count) then
+      if Index <= ABackspaces * 2 then
+        Sleep(BackspaceSettleMs)
+      else
+        Sleep(UnicodeCharGapMs);
   end;
 end;
 

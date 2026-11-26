@@ -88,6 +88,8 @@ type
     // The mark the last word delimiter left in the text when it differs from
     // the key pressed ("?" typed on the English layout is "," once switched).
     FDelimiterAsTyped: Char;
+    // What follows the last switched word in the text; taken back with it.
+    FSwitchDelimiter: TSwitchDelimiter;
     FEarlyActive: Boolean;
     FEarlyBlocked: Boolean;
     FEarlyLang: TLangKind;
@@ -420,6 +422,7 @@ begin
   ClearCaseFix;
   FLastConvertedText := '';
   FLastConvertedLen := 0;
+  FSwitchDelimiter := Default(TSwitchDelimiter);
   FLastConversionTick := 0;
   FLastTypedWord := '';
   FConversionLesson := LessonNone;
@@ -1258,6 +1261,7 @@ var
   Profile: TApplicationProfile;
   ManualWord, UndoOriginal, UndoConverted: string;
   PreferSelection: Boolean;
+  Undo: TSwitchUndo;
 begin
   FillChar(Item, SizeOf(Item), 0);
   ManualWord := '';
@@ -1292,12 +1296,14 @@ begin
         FLastTypedWord := ManualWord;
         FLastConvertedText := Item.NewText;
         FLastConvertedLen := Length(Item.NewText);
+        FSwitchDelimiter := Default(TSwitchDelimiter);
         FLastConversionTick := GetTickCount64;
         FConversionLesson := LessonNone;
       end;
       FBackspaceRun := 0;
       SettlePendingPhrase(True);
       RememberPhraseLanguage(FPhrase, Item.TargetLang);
+      LineReplaceTail(Item.OldWordLength, Item.NewText);
     end;
     FEarlyActive := False;
     FEarlyBlocked := True;
@@ -1315,8 +1321,12 @@ begin
   else if FLastConvertedText <> '' then
   begin
     Item.Kind := iwReplaceWord;
-    Item.OldWordLength := FLastConvertedLen;
-    Item.NewText := ConvertStringSwap(FLastConvertedText);
+    Undo := PlanSwitchUndo(FLastConvertedText, FSwitchDelimiter);
+    Item.OldWordLength := Undo.EraseCount;
+    Item.NewText := Undo.NewText;
+    Item.TrailingKey := Undo.TrailingKey;
+    if Undo.LineOld <> '' then
+      LineReplaceTail(Length(Undo.LineOld), Undo.LineNew);
     RevertPhraseToTypedLayout;
     RememberConversionLesson(laRejectStrong);
     ClearLastConversion;
@@ -1832,6 +1842,8 @@ var
 begin
   ClearLastCase;
   ClearCaseFix;
+  // Backspace erases the delimiter first, so it is not part of an undo.
+  FSwitchDelimiter := Default(TSwitchDelimiter);
   if FLineText <> '' then
     Delete(FLineText, Length(FLineText), 1);
   FInputBuffer.RemoveLastChar;
@@ -2070,6 +2082,8 @@ begin
         ShortPrefix := '';
       FLastConvertedText := ShortPrefix + Analysis.ConvertedText;
       FLastConvertedLen := Length(FLastConvertedText);
+      FSwitchDelimiter := DelimiterAfterSwitch(Word(VKCode), APunctuation,
+        FDelimiterAsTyped);
       LineReplaceTail(Length(MarkerText) + ShortExtra, FLastConvertedText);
       FLastConversionTick := GetTickCount64;
       FLastTypedWord := MarkerText;
@@ -2094,6 +2108,7 @@ begin
         FLastTypedWord := ConvertStringSwap(MarkerText);
         FLastConvertedText := MarkerText;
         FLastConvertedLen := Length(MarkerText);
+        FSwitchDelimiter := DelimiterAfterSwitch(Word(VKCode), APunctuation, #0);
         FLastConversionTick := GetTickCount64;
         FConversionLesson := LessonNone;
       end;
@@ -2552,6 +2567,8 @@ begin
   end;
   if AInput.VirtualKey in [VK_SPACE, VK_RETURN, VK_TAB] then
   begin
+    if FInputBuffer.IsEmpty and (FLastConvertedText <> '') then
+      NoteConversionKept;
     NoteLineDelimiter(AInput.VirtualKey, #0);
     ClearEarlySwitch;
     FInputBuffer.Clear;
@@ -2574,6 +2591,8 @@ begin
       ((GetKeyState(VK_CAPITAL) and 1) <> 0);
     if KeyedWordSeparator(AInput.VirtualKey, Shifted, CurrentLang) <> #0 then
     begin
+      if FInputBuffer.IsEmpty and (FLastConvertedText <> '') then
+        NoteConversionKept;
       LineAppend(KeyedWordSeparator(AInput.VirtualKey, Shifted, CurrentLang));
       FInputBuffer.Clear;
       FBackspaceRun := 0;
@@ -2625,8 +2644,9 @@ begin
   Kbd := PKBDLLHOOKSTRUCT(LParam);
   // Unicode injection must pass through untouched. Swallowing its key-up
   // leaves Y held down and the rest of the text is typed as "yyyy...".
-  if IsInjectingInput or IsOwnInput(Kbd^.dwExtraInfo) or
-     (Kbd^.vkCode = VK_PACKET) then
+  // Own events are told apart one by one: a key typed while the worker is
+  // sending has to be tracked and queued like any other.
+  if IsOwnInput(Kbd^.dwExtraInfo) or (Kbd^.vkCode = VK_PACKET) then
     Exit;
   if FCapturingHotkey and IsOwnWindow(GetForegroundWindow) then
     Exit;
@@ -2638,10 +2658,14 @@ begin
     Captured.Flags := Captured.Flags or KEYEVENTF_EXTENDEDKEY;
   if (Kbd^.flags and LowLevelHookUp) <> 0 then
     Captured.Flags := Captured.Flags or KEYEVENTF_KEYUP;
-  if FQueue.TryCaptureReplay(Captured) then
-  begin
-    TrackCapturedInput(Captured);
-    Exit(True);
+  case FQueue.RouteInput(FConsumedDelimiterVK, Captured) of
+    irSwallow:
+      Exit(True);
+    irQueued:
+      begin
+        TrackCapturedInput(Captured);
+        Exit(True);
+      end;
   end;
 
   CurrentWindow := GetForegroundWindow;
@@ -2656,13 +2680,6 @@ begin
 
   IsKeyDown := (WParam = WM_KEYDOWN) or (WParam = WM_SYSKEYDOWN);
   IsKeyUp := (WParam = WM_KEYUP) or (WParam = WM_SYSKEYUP);
-
-  if (FConsumedDelimiterVK <> 0) and (Kbd^.vkCode = FConsumedDelimiterVK) then
-  begin
-    if IsKeyUp then
-      FConsumedDelimiterVK := 0;
-    Exit(True);
-  end;
 
   if HandleHotkeyEvent(Word(Kbd^.vkCode), IsKeyDown, IsKeyUp) then
     Exit(True);
@@ -2801,41 +2818,5 @@ begin
     end;
   end;
 end;
-
-procedure PauseKeyboardHookOnMainThread;
-begin
-  if GetCurrentThreadId = MainThreadID then
-  begin
-    if HookManager <> nil then
-      HookManager.StopHook;
-  end
-  else
-    TThread.Synchronize(nil,
-      procedure
-      begin
-        if HookManager <> nil then
-          HookManager.StopHook;
-      end);
-end;
-
-procedure ResumeKeyboardHookOnMainThread;
-begin
-  if GetCurrentThreadId = MainThreadID then
-  begin
-    if HookManager <> nil then
-      HookManager.StartHook;
-  end
-  else
-    TThread.Synchronize(nil,
-      procedure
-      begin
-        if HookManager <> nil then
-          HookManager.StartHook;
-      end);
-end;
-
-initialization
-  PauseKeyboardHook := PauseKeyboardHookOnMainThread;
-  ResumeKeyboardHook := ResumeKeyboardHookOnMainThread;
 
 end.
